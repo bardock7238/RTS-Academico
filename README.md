@@ -1,17 +1,19 @@
 # RTS Académico
 
-Proyecto base en Unity para una futura propuesta de estrategia en tiempo real, inspirado en los principios generales de *Age of Empires*.
-
-## Estado inicial
-
-- Proyecto Unity vacío, preparado para abrirse con Unity 6.0.6f1.
-- Repositorio Git inicializado.
-- Archivos generados por Unity y configuraciones locales excluidos del versionamiento.
+Proyecto en Unity para un juego de estrategia en tiempo real, inspirado en los principios generales de *Age of Empires*. El equipo está formado por dos personas: una responsable principalmente del diseño y otra del desarrollo.
 
 ## Abrir el proyecto
 
-En Unity Hub, selecciona **Add** y elige esta carpeta. Unity completará la configuración local al abrirlo por primera vez.
+En Unity Hub, selecciona **Add** y elige esta carpeta. El proyecto usa Unity 6.0.6f1.
 
-## Siguiente paso sugerido
+## Organización inicial
 
-Antes de implementar sistemas, definiremos el alcance de la primera entrega: recursos, una unidad seleccionable, movimiento y una construcción simple suelen ser un buen punto de partida.
+- `Assets/Arte`: recursos que Unity usa directamente: modelos, texturas, animaciones, audio, interfaz y prefabs.
+- `Assets/Escenas`: escenas del juego.
+- `Assets/Datos`: configuraciones del juego que se crearán con ScriptableObjects.
+- `Assets/Scripts`: código separado entre reglas del juego (`Dominio`), sistemas (`Sistemas`) y elementos visibles de Unity (`Presentacion`).
+- `Assets/Pruebas`: futuras pruebas de edición y de juego.
+- `Diseno`: bocetos, referencias y archivos fuente de diseño. Unity no los importa automáticamente.
+- `Docs`: decisiones de diseño, desarrollo y contexto técnico.
+
+La distribución del trabajo inicial está en [Docs/Desarrollo/GuiaDeTrabajoEnPareja.md](Docs/Desarrollo/GuiaDeTrabajoEnPareja.md).
