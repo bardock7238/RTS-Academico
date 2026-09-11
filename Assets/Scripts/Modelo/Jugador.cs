@@ -6,9 +6,8 @@ namespace Modelo
         public int Oro { get; set; }
         public int Madera { get; set; }
         public int Comida { get; set; }
-
         public List<Unidad> Unidades { get; set; }
-
+        public List<Edificio> Edificios { get; set; } // Lista de estructuras del jugador
         public Jugador(string nombre)
         {
             Nombre = nombre;
