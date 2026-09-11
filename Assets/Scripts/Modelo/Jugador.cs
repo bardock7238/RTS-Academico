@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+
 namespace Modelo
 {
     public class Jugador
@@ -8,12 +10,15 @@ namespace Modelo
         public int Comida { get; set; }
         public List<Unidad> Unidades { get; set; }
         public List<Edificio> Edificios { get; set; } // Lista de estructuras del jugador
+
         public Jugador(string nombre)
         {
             Nombre = nombre;
             Oro = 100;      // Recursos iniciales para empezar la partida
             Madera = 100;
             Comida = 100;
+            Unidades = new List<Unidad>();
+            Edificios = new List<Edificio>();
         }
     }
 }
