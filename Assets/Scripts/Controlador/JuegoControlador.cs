@@ -90,7 +90,62 @@ namespace Controlador
             }
         }
 
-        // 4. Verificación de Ganador (revisa a AMBOS jugadores)
+        // 4. Entrenar Unidad (valida edificio, entrenabilidad, coords y recursos)
+        public bool EntrenarUnidad(Edificio edificio, TipoUnidad tipo, int x, int y)
+        {
+            if (edificio == null) return false;
+            if (!JugadorLocal.Edificios.Contains(edificio)) return false;
+            if (!edificio.PuedeEntrenar(tipo)) return false;
+            if (!Tablero.EsCoordenadaValida(x, y)) return false;
+            if (!Tablero.EsCasillaLibre(x, y, JugadorLocal, JugadorEnemigo)) return false;
+
+            UnidadConfig config = DatosDelJuego.UnidadesBase[tipo];
+            if (!JugadorLocal.Gastar(config.CostoMadera, config.CostoOro, config.CostoComida))
+                return false;
+
+            Unidad nuevaUnidad = DatosDelJuego.CrearUnidad(tipo, x, y);
+            JugadorLocal.AgregarUnidad(nuevaUnidad);
+
+            GestorArchivos.RegistrarAccion(
+                JugadorLocal.Nombre,
+                "Entrenar",
+                $"{tipo} entrenado en {edificio.Tipo}. Posición ({x},{y}).");
+            return true;
+        }
+
+        // 5. Recolectar Recurso (valida aldeano, distancia y agotamiento)
+        public bool RecolectarRecursos(Unidad recolector, Recurso recurso, int cantidad)
+        {
+            if (recolector == null || recurso == null) return false;
+            if (!recolector.EsRecolector) return false;
+            if (!recolector.EstaViva) return false;
+            if (cantidad <= 0) return false;
+            if (recurso.EstaAgotado) return false;
+
+            bool adyacenteAlRecurso =
+                Math.Abs(recolector.PosicionX - recurso.PosicionX) <= 1 &&
+                Math.Abs(recolector.PosicionY - recurso.PosicionY) <= 1;
+            if (!adyacenteAlRecurso) return false;
+
+            int extraido = recurso.Extraer(cantidad);
+            if (extraido <= 0) return false;
+
+            switch (recurso.Tipo)
+            {
+                case TipoRecurso.Madera: JugadorLocal.Recibir(extraido, 0, 0); break;
+                case TipoRecurso.Oro: JugadorLocal.Recibir(0, extraido, 0); break;
+                case TipoRecurso.Comida: JugadorLocal.Recibir(0, 0, extraido); break;
+            }
+
+            GestorArchivos.RegistrarAccion(
+                JugadorLocal.Nombre,
+                "Recolectar",
+                $"{recolector.Tipo} recolectó {extraido} de {recurso.Tipo}." +
+                $" Oro: {JugadorLocal.Oro}, Madera: {JugadorLocal.Madera}, Comida: {JugadorLocal.Comida}");
+            return true;
+        }
+
+        // 6. Verificación de Ganador (revisa a AMBOS jugadores)
         public void VerificarGanador()
         {
             if (JugadorDerrotado(JugadorEnemigo))
