@@ -49,7 +49,8 @@ namespace Controlador
                 return false; // ya hay un edificio ahí
 
             JugadorLocal.Madera -= costoMadera;
-            Edificio nuevoEdificio = new Edificio(tipo, 200, x, y, costoMadera);
+            Edificio nuevoEdificio = DatosDelJuego.CrearEdificio(
+                DatosDelJuego.ObtenerTipoEdificio(tipo), x, y);
             JugadorLocal.Edificios.Add(nuevoEdificio);
 
             GestorArchivos.RegistrarAccion(
@@ -97,14 +98,15 @@ namespace Controlador
 
         private bool JugadorDerrotado(Jugador jugador)
         {
-            bool sinCentroUrbano = !jugador.Edificios.Exists(e => e.Tipo == "CentroUrbano" && e.Vida > 0);
+            bool sinCentroUrbano = !jugador.Edificios.Exists(
+                e => e.Tipo == TipoEdificio.CentroUrbano && e.Vida > 0);
             bool sinUnidades = jugador.Unidades.Count == 0;
             return sinCentroUrbano || sinUnidades;
         }
 
         private void FinalizarPartida(Jugador ganador)
         {
-            EstadoPartida.EnEjecucion = false;
+            EstadoPartida.Finalizar(ganador.Nombre);
             GestorArchivos.GuardarResultadoFinal($"¡Ganador: {ganador.Nombre}!");
         }
     }
