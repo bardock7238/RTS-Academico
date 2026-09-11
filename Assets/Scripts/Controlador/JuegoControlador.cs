@@ -41,22 +41,27 @@ namespace Controlador
         }
 
         // 2. Construir Edificio (valida coordenadas, choque y recursos)
-        public bool ConstruirEdificio(string tipo, int x, int y, int costoMadera)
+        public bool ConstruirEdificio(TipoEdificio tipo, int x, int y)
         {
             if (!Tablero.EsCoordenadaValida(x, y)) return false;
-            if (JugadorLocal.Madera < costoMadera) return false;
-            if (JugadorLocal.Edificios.Exists(e => e.PosicionX == x && e.PosicionY == y))
-                return false; // ya hay un edificio ahí
+            if (Tablero.CasillaTieneRecurso(x, y)) return false;
+            if (!Tablero.EsCasillaLibre(x, y, JugadorLocal, JugadorEnemigo)) return false;
 
-            JugadorLocal.Madera -= costoMadera;
-            Edificio nuevoEdificio = DatosDelJuego.CrearEdificio(
-                DatosDelJuego.ObtenerTipoEdificio(tipo), x, y);
-            JugadorLocal.Edificios.Add(nuevoEdificio);
+            EdificioConfig config = DatosDelJuego.EdificiosBase[tipo];
+
+            if (!JugadorLocal.PuedePagar(config.CostoMadera, config.CostoOro, config.CostoComida))
+                return false;
+
+            if (!JugadorLocal.Gastar(config.CostoMadera, config.CostoOro, config.CostoComida))
+                return false;
+
+            Edificio nuevoEdificio = DatosDelJuego.CrearEdificio(tipo, x, y);
+            JugadorLocal.AgregarEdificio(nuevoEdificio);
 
             GestorArchivos.RegistrarAccion(
                 JugadorLocal.Nombre,
                 "Construir",
-                $"{tipo} en ({x},{y}). Madera restante: {JugadorLocal.Madera}");
+                $"{tipo} en ({x},{y}). Madera: {JugadorLocal.Madera}, Oro: {JugadorLocal.Oro}, Comida: {JugadorLocal.Comida}");
             return true;
         }
 
@@ -64,15 +69,17 @@ namespace Controlador
         public void Atacar(Unidad atacante, Unidad enemigo)
         {
             if (atacante == null || enemigo == null) return;
-            if (atacante.Vida <= 0) return; // una unidad muerta no ataca
+            if (!atacante.PuedeAtacar) return;
 
-            enemigo.Vida -= atacante.Ataque;
+            enemigo.RecibirDano(atacante.Ataque);
+
+            int danoReal = Math.Max(0, atacante.Ataque - enemigo.Defensa);
             GestorArchivos.RegistrarAccion(
                 JugadorLocal.Nombre,
                 "Ataque",
-                $"{atacante.Tipo} infligió {atacante.Ataque} de daño a {enemigo.Tipo}.");
+                $"{atacante.Tipo} infligió {danoReal} de daño a {enemigo.Tipo}.");
 
-            if (enemigo.Vida <= 0)
+            if (!enemigo.EstaViva)
             {
                 JugadorEnemigo.Unidades.Remove(enemigo);
                 GestorArchivos.RegistrarAccion(
