@@ -15,6 +15,7 @@ namespace Modelo
         public int CostoComida { get; set; }
         public int TiempoEntrenamientoSegundos { get; set; }
         public bool EsRecolector { get; set; }
+        public int CapacidadRecoleccion { get; set; }   // Cuánto recolecta por ciclo (0 = no recolecta)
     }
 
     // Configuración base de un tipo de edificio (usada por DatosDelJuego).
@@ -46,7 +47,8 @@ namespace Modelo
                         RangoAtaque = 1,
                         CostoComida = 50,
                         TiempoEntrenamientoSegundos = 10,
-                        EsRecolector = true
+                        EsRecolector = true,
+                        CapacidadRecoleccion = 2
                     }
                 },
                 {
@@ -157,6 +159,7 @@ namespace Modelo
                 CostoComida = c.CostoComida,
                 TiempoEntrenamientoSegundos = c.TiempoEntrenamientoSegundos,
                 EsRecolector = c.EsRecolector,
+                CapacidadRecoleccion = c.CapacidadRecoleccion,
                 PosicionX = x,
                 PosicionY = y,
                 Estado = EstadoUnidad.Idle

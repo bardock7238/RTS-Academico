@@ -17,6 +17,7 @@ namespace Modelo
         public int CostoComida { get; set; }
         public int TiempoEntrenamientoSegundos { get; set; }
         public bool EsRecolector { get; set; }    // True solo para el Aldeano
+        public int CapacidadRecoleccion { get; set; } // Cuánto recolecta por ciclo
         public EstadoUnidad Estado { get; set; }
 
         public Unidad()
