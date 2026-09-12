@@ -24,3 +24,6 @@ Thumbs.db
 configuracion.txt
 log_partida.txt
 resultado_final.txt
+
+# Resumen de progreso para sesiones futuras (solo local, lo comparte Johan)
+AVANCE_PROYECTO.md

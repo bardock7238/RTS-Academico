@@ -13,6 +13,8 @@ namespace Controlador
         public Jugador JugadorEnemigo { get; private set; }
         public Mapa Tablero { get; private set; }
         public Partida EstadoPartida { get; private set; }
+        public ConectorRed RedPartida { get; private set; }
+        public string NombreRivalRed { get; private set; }
 
         // Candado compartido: todo cambio a recursos/listas pasa por aquí para
         // evitar condiciones de carrera cuando los hilos de recolección corren.
@@ -24,32 +26,34 @@ namespace Controlador
         private readonly Dictionary<Unidad, CancellationTokenSource> _recolectoresActivos =
             new Dictionary<Unidad, CancellationTokenSource>();
 
-        public JuegoControlador(string nombreJugador)
+        public JuegoControlador(string nombreJugador, bool localArriba = true)
         {
             JugadorLocal = new Jugador(nombreJugador);
             JugadorEnemigo = new Jugador("Enemigo");
             Tablero = new Mapa();
             EstadoPartida = new Partida();
 
-            // Inicialización: Centro Urbano y aldeanos iniciales en extremos opuestos.
-            Edificio centroLocal = DatosDelJuego.CrearCentroUrbano(7, 1);
-            Edificio centroEnemigo = DatosDelJuego.CrearCentroUrbano(7, 13);
+            // Cada instancia coloca a SU jugador en su lado. El host (localArriba = true)
+            // vive arriba; el cliente (localArriba = false) vive abajo. Así las copias
+            // de ambos mundos concuerdan y la red puede espejar movimientos por casilla.
+            int centroLocalY = localArriba ? 1 : 13;
+            int centroEnemigoY = localArriba ? 13 : 1;
+            int aldeanoLocalY = localArriba ? 1 : 13;
+            int aldeanoEnemigoY = localArriba ? 13 : 1;
+
+            Edificio centroLocal = DatosDelJuego.CrearCentroUrbano(7, centroLocalY);
+            Edificio centroEnemigo = DatosDelJuego.CrearCentroUrbano(7, centroEnemigoY);
             JugadorLocal.AgregarEdificio(centroLocal);
             JugadorEnemigo.AgregarEdificio(centroEnemigo);
 
-            JugadorLocal.AgregarUnidad(PuebloInicial(JugadorLocal.Nombre, 6, 1));
-            JugadorEnemigo.AgregarUnidad(PuebloInicial(JugadorEnemigo.Nombre, 6, 13));
+            JugadorLocal.AgregarUnidad(DatosDelJuego.CrearUnidad(TipoUnidad.Aldeano, 6, aldeanoLocalY));
+            JugadorEnemigo.AgregarUnidad(DatosDelJuego.CrearUnidad(TipoUnidad.Aldeano, 6, aldeanoEnemigoY));
 
             GestorArchivos.GuardarConfiguracionInicial(
                 $"Jugador: {nombreJugador} | Mapa: {Mapa.Ancho}x{Mapa.Alto} | " +
                 $"Centro local ({centroLocal.PosicionX},{centroLocal.PosicionY}) | " +
                 $"Centro enemigo ({centroEnemigo.PosicionX},{centroEnemigo.PosicionY})");
             GestorArchivos.RegistrarAccion(nombreJugador, "Inicio", "Partida inicializada.");
-        }
-
-        private Unidad PuebloInicial(string nombre, int x, int y)
-        {
-            return DatosDelJuego.CrearUnidad(TipoUnidad.Aldeano, x, y);
         }
 
         // ============ ACCIONES DE JUEGO ============
@@ -66,6 +70,8 @@ namespace Controlador
                 int origenX = unidad.PosicionX;
                 int origenY = unidad.PosicionY;
                 unidad.MoverA(nuevoX, nuevoY);
+
+                EnviarPorRed($"MOVER;{origenX};{origenY};{nuevoX};{nuevoY}");
 
                 GestorArchivos.RegistrarAccion(
                     JugadorLocal.Nombre,
@@ -90,6 +96,11 @@ namespace Controlador
 
                 Edificio nuevoEdificio = DatosDelJuego.CrearEdificio(tipo, x, y);
                 JugadorLocal.AgregarEdificio(nuevoEdificio);
+
+                EnviarPorRed($"CONSTRUIR;{tipo};{x};{y}");
+
+                // La obra avanza sola en segundo plano y completa el edificio.
+                _ = ConstruccionTaskAsync(nuevoEdificio, config.TiempoConstruccionSegundos, JugadorLocal.Nombre);
 
                 GestorArchivos.RegistrarAccion(
                     JugadorLocal.Nombre,
@@ -153,10 +164,27 @@ namespace Controlador
                 }
 
                 JugadorLocal.AgregarUnidad(nueva);
+                EnviarPorRed($"ENTRENAR;{tipo};{nueva.PosicionX};{nueva.PosicionY}");
                 GestorArchivos.RegistrarAccion(
                     JugadorLocal.Nombre,
                     "Entrenar",
                     $"{tipo} listo en ({nueva.PosicionX},{nueva.PosicionY}).");
+            }
+        }
+
+        // La construcción avanza sola: tras los segundos del catálogo, el edificio
+        // queda operativo y ya puede entrenar. Se usa igual para el rival espejo.
+        private async Task ConstruccionTaskAsync(Edificio edificio, int segundos, string nombreDueno)
+        {
+            await EsperarConstruccion(segundos);
+
+            lock (_lockJuego)
+            {
+                edificio.CompletarConstruccion();
+                GestorArchivos.RegistrarAccion(
+                    nombreDueno,
+                    "Construir",
+                    $"{edificio.Tipo} en ({edificio.PosicionX},{edificio.PosicionY}) terminado.");
             }
         }
 
@@ -263,6 +291,7 @@ namespace Controlador
                 enemigo.RecibirDano(atacante.Ataque);
 
                 int danoReal = Math.Max(0, atacante.Ataque - enemigo.Defensa);
+                EnviarPorRed($"ATACAR;{atacante.PosicionX};{atacante.PosicionY};{enemigo.PosicionX};{enemigo.PosicionY};{danoReal}");
                 GestorArchivos.RegistrarAccion(
                     JugadorLocal.Nombre,
                     "Ataque",
@@ -310,6 +339,158 @@ namespace Controlador
             GestorArchivos.GuardarResultadoFinal($"¡Ganador: {ganador.Nombre}!");
         }
 
+        // ============ RED (sockets TCP) ============
+
+        // Modo host: abre el puerto y espera a que un compañero se conecte.
+        public bool HospedarRed(int puerto = 5505)
+        {
+            RedPartida = new ConectorRed();
+            if (!RedPartida.IniciarHost(puerto))
+            {
+                GestorArchivos.RegistrarAccion(JugadorLocal.Nombre, "Red",
+                    "Error al hospedar: " + RedPartida.UltimoError);
+                return false;
+            }
+            GestorArchivos.RegistrarAccion(JugadorLocal.Nombre, "Red",
+                $"Esperando conexiones en {ConectorRed.ObtenerIpLocal()}:{puerto}");
+            return true;
+        }
+
+        // Modo cliente: se une a la partida de otro host.
+        public bool ConectarRed(string ip, int puerto = 5505)
+        {
+            RedPartida = new ConectorRed();
+            if (!RedPartida.Conectar(ip, puerto))
+            {
+                GestorArchivos.RegistrarAccion(JugadorLocal.Nombre, "Red",
+                    "Error al conectar: " + RedPartida.UltimoError);
+                return false;
+            }
+            GestorArchivos.RegistrarAccion(JugadorLocal.Nombre, "Red", $"Conectado a {ip}:{puerto}");
+            EnviarPorRed($"SALUDO;{JugadorLocal.Nombre}");
+            return true;
+        }
+
+        // Los efectos DE MI jugador NO se aplican dos veces: solo se avisa al rival
+        // para que refleje la acción en su copia. El rival procesa con ProcesarMensajesRedPendientes.
+        private void EnviarPorRed(string mensaje)
+        {
+            if (RedPartida != null && RedPartida.EstaConectado)
+                RedPartida.Enviar(mensaje);
+        }
+
+        public void EnviarSaludoRed()
+        {
+            EnviarPorRed($"SALUDO;{JugadorLocal.Nombre}");
+        }
+
+        // La Vista llama esto en cada Update: aplica los mensajes que llegaron.
+        // Devuelve cuántos mensajes se procesaron.
+        public int ProcesarMensajesRedPendientes()
+        {
+            if (RedPartida == null) return 0;
+            int procesados = 0;
+            while (RedPartida.HayMensajes)
+            {
+                string mensaje = RedPartida.RecibirMensaje();
+                if (mensaje == null) break;
+                ProcesarMensajeRed(mensaje);
+                procesados++;
+            }
+            return procesados;
+        }
+
+        // "MOVER;xOrigen;yOrigen;xNuevo;yNuevo"
+        // "ATACAR;xAtacante;yAtacante;xObjetivo;yObjetivo;dano"
+        // "CONSTRUIR;Tipo;x;y"
+        // "ENTRENAR;Tipo;x;y"
+        // "SALUDO;nombre"
+        private void ProcesarMensajeRed(string mensaje)
+        {
+            string[] p = mensaje.Split(';');
+            if (p.Length < 2) return;
+
+            lock (_lockJuego)
+            {
+                switch (p[0])
+                {
+                    case "SALUDO":
+                        NombreRivalRed = p[1];
+                        JugadorEnemigo.Nombre = p[1]; // El rival presenta su nombre real.
+                        GestorArchivos.RegistrarAccion(JugadorEnemigo.Nombre, "Red",
+                            $"Rival conectado: {p[1]}");
+                        break;
+
+                    case "MOVER":
+                    {
+                        if (!int.TryParse(p[1], out int ox) || !int.TryParse(p[2], out int oy) ||
+                            !int.TryParse(p[3], out int nx) || !int.TryParse(p[4], out int ny)) return;
+                        Unidad unidad = JugadorEnemigo.Unidades.FirstOrDefault(
+                            u => u.PosicionX == ox && u.PosicionY == oy);
+                        if (unidad != null && unidad.EstaViva &&
+                            Tablero.EsCoordenadaValida(nx, ny) &&
+                            Tablero.EsCasillaLibre(nx, ny, JugadorLocal, JugadorEnemigo))
+                        {
+                            unidad.MoverA(nx, ny);
+                            GestorArchivos.RegistrarAccion(JugadorEnemigo.Nombre, "Red",
+                                $"Rival movió {unidad.Tipo} a ({nx},{ny}).");
+                        }
+                        break;
+                    }
+
+                    case "ATACAR":
+                    {
+                        if (!int.TryParse(p[1], out int ax) || !int.TryParse(p[2], out int ay) ||
+                            !int.TryParse(p[3], out int bx) || !int.TryParse(p[4], out int by) ||
+                            !int.TryParse(p[5], out int dano)) return;
+                        Unidad atacante = JugadorEnemigo.Unidades.FirstOrDefault(
+                            u => u.PosicionX == ax && u.PosicionY == ay);
+                        Unidad objetivo = JugadorLocal.Unidades.FirstOrDefault(
+                            u => u.PosicionX == bx && u.PosicionY == by);
+                        if (atacante == null || objetivo == null || !objetivo.EstaViva) return;
+                        objetivo.RecibirDano(dano);
+                        GestorArchivos.RegistrarAccion(JugadorEnemigo.Nombre, "Red",
+                            $"Rival atacó a {objetivo.Tipo} ({dano} de daño).");
+                        if (!objetivo.EstaViva)
+                        {
+                            JugadorLocal.EliminarUnidad(objetivo);
+                            VerificarGanador();
+                        }
+                        break;
+                    }
+
+                    case "CONSTRUIR":
+                    {
+                        if (!int.TryParse(p[2], out int bx) || !int.TryParse(p[3], out int by)) return;
+                        if (!Tablero.EsCoordenadaValida(bx, by)) return;
+                        if (Tablero.CasillaTieneRecurso(bx, by)) return;
+                        if (!Tablero.EsCasillaLibre(bx, by, JugadorLocal, JugadorEnemigo)) return;
+                        TipoEdificio tipo = DatosDelJuego.ObtenerTipoEdificio(p[1]);
+                        Edificio espejo = DatosDelJuego.CrearEdificio(tipo, bx, by);
+                        JugadorEnemigo.AgregarEdificio(espejo);
+                        _ = ConstruccionTaskAsync(espejo,
+                            DatosDelJuego.EdificiosBase[tipo].TiempoConstruccionSegundos,
+                            JugadorEnemigo.Nombre);
+                        GestorArchivos.RegistrarAccion(JugadorEnemigo.Nombre, "Red",
+                            $"Rival construyó {tipo} en ({bx},{by}).");
+                        break;
+                    }
+
+                    case "ENTRENAR":
+                    {
+                        if (!Enum.TryParse(p[1], true, out TipoUnidad tipo) ||
+                            !int.TryParse(p[2], out int ux) || !int.TryParse(p[3], out int uy)) return;
+                        if (!Tablero.EsCoordenadaValida(ux, uy)) return;
+                        if (!Tablero.EsCasillaLibre(ux, uy, JugadorLocal, JugadorEnemigo)) return;
+                        JugadorEnemigo.AgregarUnidad(DatosDelJuego.CrearUnidad(tipo, ux, uy));
+                        GestorArchivos.RegistrarAccion(JugadorEnemigo.Nombre, "Red",
+                            $"Rival entrenó {tipo} en ({ux},{uy}).");
+                        break;
+                    }
+                }
+            }
+        }
+
         // ============ AYUDANTES ============
 
         private bool EstanAdyacentes(Unidad unidad, Recurso recurso)
@@ -342,6 +523,11 @@ namespace Controlador
         protected virtual Task EsperarEntrenamiento(int segundos, CancellationToken token)
         {
             return Task.Delay(segundos * 1000, token);
+        }
+
+        protected virtual Task EsperarConstruccion(int segundos)
+        {
+            return Task.Delay(segundos * 1000);
         }
 
         protected virtual int CicloRecoleccionMs => 1000;
