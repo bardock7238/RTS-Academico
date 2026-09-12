@@ -49,8 +49,7 @@ namespace Controlador
 
         private Unidad PuebloInicial(string nombre, int x, int y)
         {
-            Unidad aldeano = DatosDelJuego.CrearUnidad(TipoUnidad.Aldeano, x, y);
-            return aldeano;
+            return DatosDelJuego.CrearUnidad(TipoUnidad.Aldeano, x, y);
         }
 
         // ============ ACCIONES DE JUEGO ============
@@ -76,24 +75,26 @@ namespace Controlador
             }
         }
 
-        // 2. Construir Edificio (valida coordenadas, choque y recursos)
-        public bool ConstruirEdificio(string tipo, int x, int y, int costoMadera)
+        // 2. Construir Edificio (valida coordenadas, choque, yacimiento y costos del catálogo)
+        public bool ConstruirEdificio(TipoEdificio tipo, int x, int y)
         {
             lock (_lockJuego)
             {
-                TipoEdificio tipoEdificio = DatosDelJuego.ObtenerTipoEdificio(tipo);
                 if (!Tablero.EsCoordenadaValida(x, y)) return false;
-                if (JugadorLocal.Madera < costoMadera) return false;
-                if (!Tablero.EsCasillaEdificable(x, y, JugadorLocal, JugadorEnemigo)) return false;
+                if (Tablero.CasillaTieneRecurso(x, y)) return false;
+                if (!Tablero.EsCasillaLibre(x, y, JugadorLocal, JugadorEnemigo)) return false;
 
-                JugadorLocal.Madera -= costoMadera;
-                Edificio nuevoEdificio = DatosDelJuego.CrearEdificio(tipoEdificio, x, y);
+                EdificioConfig config = DatosDelJuego.EdificiosBase[tipo];
+                if (!JugadorLocal.Gastar(config.CostoMadera, config.CostoOro, config.CostoComida))
+                    return false;
+
+                Edificio nuevoEdificio = DatosDelJuego.CrearEdificio(tipo, x, y);
                 JugadorLocal.AgregarEdificio(nuevoEdificio);
 
                 GestorArchivos.RegistrarAccion(
                     JugadorLocal.Nombre,
                     "Construir",
-                    $"{tipo} en ({x},{y}). Madera restante: {JugadorLocal.Madera}");
+                    $"{tipo} en ({x},{y}). Madera: {JugadorLocal.Madera}, Oro: {JugadorLocal.Oro}, Comida: {JugadorLocal.Comida}");
                 return true;
             }
         }
@@ -142,8 +143,6 @@ namespace Controlador
                 _entrenamientosActivos.Remove(tipo);
                 if (!completado || token.IsCancellationRequested) return;
 
-                // El edificio que entrenó es el que pidió el jugador y ya validamos;
-                // buscamos su posición para sacar la unidad al lado.
                 Unidad nueva = DatosDelJuego.CrearUnidad(tipo, 0, 0);
                 Edificio origen = JugadorLocal.Edificios.FirstOrDefault(
                     e => e.UnidadesEntrenables.Contains(tipo) && e.EstaOperativo);
@@ -161,7 +160,7 @@ namespace Controlador
             }
         }
 
-        // 4. Recolectar recursos (en segundo plano, un hilo por aldeano).
+        // 4. Recolectar recursos en segundo plano (un hilo por aldeano).
         public bool IniciarRecoleccion(Unidad aldeano, Recurso recurso)
         {
             lock (_lockJuego)
@@ -248,7 +247,7 @@ namespace Controlador
             }
         }
 
-        // 5. Atacar (valida rango de ataque y usa el método del Modelo).
+        // 5. Atacar (valida rango y usa la defensa del Modelo).
         public bool Atacar(Unidad atacante, Unidad enemigo)
         {
             lock (_lockJuego)
@@ -262,10 +261,12 @@ namespace Controlador
 
                 atacante.Estado = EstadoUnidad.Atacando;
                 enemigo.RecibirDano(atacante.Ataque);
+
+                int danoReal = Math.Max(0, atacante.Ataque - enemigo.Defensa);
                 GestorArchivos.RegistrarAccion(
                     JugadorLocal.Nombre,
                     "Ataque",
-                    $"{atacante.Tipo} infligió {atacante.Ataque} de daño a {enemigo.Tipo}.");
+                    $"{atacante.Tipo} infligió {danoReal} de daño a {enemigo.Tipo}.");
 
                 if (!enemigo.EstaViva)
                 {
