@@ -318,6 +318,41 @@ namespace Controlador
             }
         }
 
+        // 5b. Atacar Edificio (permite destruir estructuras y ganar por Centro Urbano).
+        public bool AtacarEdificio(Unidad atacante, Edificio edificioEnemigo)
+        {
+            lock (_lockJuego)
+            {
+                if (atacante == null || edificioEnemigo == null) return false;
+                if (!atacante.PuedeAtacar || !edificioEnemigo.EstaViva) return false;
+                if (!JugadorEnemigo.Edificios.Contains(edificioEnemigo)) return false;
+
+                int distancia = Math.Abs(atacante.PosicionX - edificioEnemigo.PosicionX)
+                              + Math.Abs(atacante.PosicionY - edificioEnemigo.PosicionY);
+                if (distancia > atacante.RangoAtaque) return false;
+
+                atacante.Estado = EstadoUnidad.Atacando;
+                edificioEnemigo.RecibirDano(atacante.Ataque);
+
+                // Se envía el ATAQUE (no el daño final): el rival aplica la MISMA fórmula
+                // con su copia del edificio y los dos lados coinciden.
+                EnviarPorRed($"ATACAR_EDIFICIO;{atacante.PosicionX};{atacante.PosicionY};" +
+                             $"{edificioEnemigo.PosicionX};{edificioEnemigo.PosicionY};{atacante.Ataque}");
+
+                GestorArchivos.RegistrarAccion(JugadorLocal.Nombre, "Ataque",
+                    $"{atacante.Tipo} atacó {edificioEnemigo.Tipo} (vida restante {edificioEnemigo.Vida}).");
+
+                if (!edificioEnemigo.EstaViva)
+                {
+                    JugadorEnemigo.EliminarEdificio(edificioEnemigo);
+                    GestorArchivos.RegistrarAccion(JugadorLocal.Nombre, "Ataque",
+                        $"{edificioEnemigo.Tipo} enemigo destruido.");
+                    VerificarGanador();
+                }
+                return true;
+            }
+        }
+
         // ============ VERIFICACIÓN DE GANADOR (revisa a AMBOS jugadores) ============
 
         public void VerificarGanador()
@@ -410,6 +445,7 @@ namespace Controlador
 
         // "MOVER;xOrigen;yOrigen;xNuevo;yNuevo"
         // "ATACAR;xAtacante;yAtacante;xObjetivo;yObjetivo;dano"
+        // "ATACAR_EDIFICIO;xAtacante;yAtacante;xEdificio;yEdificio;ataque"
         // "CONSTRUIR;Tipo;x;y"
         // "ENTRENAR;Tipo;x;y"
         // "SALUDO;nombre"
@@ -508,6 +544,28 @@ namespace Controlador
                         enemigo.Estado = flag == 1 ? EstadoUnidad.Recolectando : EstadoUnidad.Idle;
                         GestorArchivos.RegistrarAccion(JugadorEnemigo.Nombre, "Red",
                             $"Rival {(flag == 1 ? "empezó a recolectar" : "detuvo la recolección")} en ({rx},{ry}).");
+                        break;
+                    }
+
+                    case "ATACAR_EDIFICIO":
+                    {
+                        // ATACAR_EDIFICIO;xAtacante;yAtacante;xEdificio;yEdificio;ataque
+                        if (!int.TryParse(p[1], out int ax) || !int.TryParse(p[2], out int ay) ||
+                            !int.TryParse(p[3], out int bx) || !int.TryParse(p[4], out int by) ||
+                            !int.TryParse(p[5], out int ataque)) return;
+                        Unidad atacante = JugadorEnemigo.Unidades.FirstOrDefault(
+                            u => u.PosicionX == ax && u.PosicionY == ay);
+                        Edificio objetivo = JugadorLocal.Edificios.FirstOrDefault(
+                            e => e.PosicionX == bx && e.PosicionY == by);
+                        if (atacante == null || objetivo == null || !objetivo.EstaViva) return;
+                        objetivo.RecibirDano(ataque); // misma fórmula de daño que en el lado del rival
+                        GestorArchivos.RegistrarAccion(JugadorEnemigo.Nombre, "Red",
+                            $"Rival atacó {objetivo.Tipo} ({ataque} de ataque).");
+                        if (!objetivo.EstaViva)
+                        {
+                            JugadorLocal.EliminarEdificio(objetivo);
+                            VerificarGanador();
+                        }
                         break;
                     }
                 }
