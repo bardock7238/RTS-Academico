@@ -21,6 +21,9 @@ namespace Controlador
         public bool EstaConectado { get; private set; }
         public string UltimoError { get; private set; }
 
+        // Se dispara CADA vez que se consigue una conexión (la inicial y cada reconexión).
+        public event Action AlConectar;
+
         // Cola segura entre hilos: diferencias de punto de la red → hilo de juego.
         private readonly ConcurrentQueue<string> _recibidos = new ConcurrentQueue<string>();
 
@@ -52,7 +55,7 @@ namespace Controlador
                 return false;
             }
 
-            _hiloEscucha = new Thread(AceptarClienteYEscuchar)
+            _hiloEscucha = new Thread(CicloServidor)
             {
                 IsBackground = true,
                 Name = "HiloRedServidor"
@@ -61,18 +64,21 @@ namespace Controlador
             return true;
         }
 
-        private void AceptarClienteYEscuchar()
+        private void CicloServidor()
         {
-            try
+            while (_ejecutando)
             {
-                TcpClient cliente = _servidor.AcceptTcpClient();
-                AbrirConexion(cliente);
-                Escuchar();
-            }
-            catch (Exception ex)
-            {
-                // Si nos están cerrando (_ejecutando = false), ignorarlo es lo correcto.
-                if (_ejecutando) UltimoError = ex.Message;
+                try
+                {
+                    TcpClient cliente = _servidor.AcceptTcpClient(); // bloquea hasta que alguien llame
+                    AbrirConexion(cliente);
+                    Escuchar();            // bloquea hasta que el rival cague o cierre
+                    CerrarConexionActual(); // listo: volvemos a esperar al siguiente
+                }
+                catch (Exception ex)
+                {
+                    if (_ejecutando) UltimoError = ex.Message;
+                }
             }
         }
 
@@ -81,19 +87,7 @@ namespace Controlador
         public bool Conectar(string ip, int puerto)
         {
             _ejecutando = true;
-            try
-            {
-                TcpClient cliente = new TcpClient();
-                cliente.Connect(ip, puerto);
-                AbrirConexion(cliente);
-            }
-            catch (Exception ex)
-            {
-                UltimoError = ex.Message;
-                return false;
-            }
-
-            _hiloEscucha = new Thread(Escuchar)
+            _hiloEscucha = new Thread(() => CicloCliente(ip, puerto))
             {
                 IsBackground = true,
                 Name = "HiloRedCliente"
@@ -102,13 +96,35 @@ namespace Controlador
             return true;
         }
 
+        private void CicloCliente(string ip, int puerto)
+        {
+            while (_ejecutando)
+            {
+                try
+                {
+                    TcpClient cliente = new TcpClient();
+                    cliente.Connect(ip, puerto);
+                    AbrirConexion(cliente);
+                    Escuchar();            // bloquea hasta que el host se caiga
+                    CerrarConexionActual(); // volvemos a intentar en 1 segundo
+                }
+                catch (Exception)
+                {
+                    // No hubo servidor (o se cayó): dormimos 1s y reintentamos.
+                    if (!_ejecutando) break;
+                    Thread.Sleep(1000);
+                }
+            }
+        }
+
         private void AbrirConexion(TcpClient cliente)
         {
             _conexion = cliente;
             NetworkStream flujo = cliente.GetStream();
             _escritor = new StreamWriter(flujo, Encoding.UTF8) { AutoFlush = true };
             _lector = new StreamReader(flujo, Encoding.UTF8);
-            EstaConectado = true;
+            EstaConectado = true;   // primero el flag (para que Enviar no falle)
+            AlConectar?.Invoke();   // avisar al Controlador (reenviará el SALUDO)
         }
 
         // ============ LECTURA EN SEGUNDO PLANO (bloqueante a propósito) ============
@@ -155,6 +171,27 @@ namespace Controlador
                 _escritor.WriteLine(mensaje);
                 return true;
             }
+        }
+
+        // Cierra SOLO el tubo actual (sin matar los ciclos de reconexión).
+        // Útil en el juego (¿reset?) y en las pruebas para simular una caída.
+        public void CortarConexion()
+        {
+            CerrarConexionActual();
+        }
+
+        private void CerrarConexionActual()
+        {
+            lock (_lockEnvio)
+            {
+                try { _escritor?.Close(); } catch { }
+                try { _lector?.Close(); } catch { }
+                try { _conexion?.Close(); } catch { }
+                _escritor = null;
+                _lector = null;
+                _conexion = null;
+            }
+            EstaConectado = false;
         }
 
         public void Cerrar()

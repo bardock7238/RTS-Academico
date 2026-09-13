@@ -388,6 +388,7 @@ namespace Controlador
         public bool HospedarRed(int puerto = 5505)
         {
             RedPartida = new ConectorRed();
+            RedPartida.AlConectar += EnviarSaludoRed; // saludo inicial Y cada reconexión
             if (!RedPartida.IniciarHost(puerto))
             {
                 GestorArchivos.RegistrarAccion(JugadorLocal.Nombre, "Red",
@@ -403,6 +404,7 @@ namespace Controlador
         public bool ConectarRed(string ip, int puerto = 5505)
         {
             RedPartida = new ConectorRed();
+            RedPartida.AlConectar += EnviarSaludoRed; // saludo inicial Y cada reconexión
             if (!RedPartida.Conectar(ip, puerto))
             {
                 GestorArchivos.RegistrarAccion(JugadorLocal.Nombre, "Red",
@@ -410,7 +412,6 @@ namespace Controlador
                 return false;
             }
             GestorArchivos.RegistrarAccion(JugadorLocal.Nombre, "Red", $"Conectado a {ip}:{puerto}");
-            EnviarPorRed($"SALUDO;{JugadorLocal.Nombre}");
             return true;
         }
 
