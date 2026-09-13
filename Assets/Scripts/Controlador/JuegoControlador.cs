@@ -205,6 +205,7 @@ namespace Controlador
                 _recolectoresActivos[aldeano] = cts;
 
                 _ = RecoleccionTaskAsync(aldeano, recurso, cts.Token);
+                EnviarPorRed($"RECOLECTAR;{aldeano.PosicionX};{aldeano.PosicionY};1");
 
                 GestorArchivos.RegistrarAccion(
                     JugadorLocal.Nombre,
@@ -221,6 +222,7 @@ namespace Controlador
                 if (_recolectoresActivos.TryGetValue(aldeano, out CancellationTokenSource cts))
                 {
                     cts.Cancel();
+                    EnviarPorRed($"RECOLECTAR;{aldeano.PosicionX};{aldeano.PosicionY};0");
                     return true;
                 }
                 return false;
@@ -238,17 +240,18 @@ namespace Controlador
         private async Task RecoleccionTaskAsync(Unidad aldeano, Recurso recurso, CancellationToken token)
         {
             int cantidadPorCiclo = DatosDelJuego.UnidadesBase[aldeano.Tipo].CapacidadRecoleccion;
+            bool terminoSolo = false; // True si dejó de recolectar por sí mismo (no por detenerlo).
 
             while (true)
             {
                 try { await Task.Delay(CicloRecoleccionMs, token); }
-                catch (TaskCanceledException) { break; }
+                catch (TaskCanceledException) { break; } // Lo detuvieron: el 0 ya salió de DetenerRecoleccion.
 
                 lock (_lockJuego)
                 {
-                    if (!aldeano.EstaViva || recurso.EstaAgotado) break;
+                    if (!aldeano.EstaViva || recurso.EstaAgotado) { terminoSolo = true; break; }
                     int cantidad = recurso.Extraer(cantidadPorCiclo);
-                    if (cantidad <= 0) break;
+                    if (cantidad <= 0) { terminoSolo = true; break; }
 
                     EntregarRecurso(recurso.Tipo, cantidad);
                     GestorArchivos.RegistrarAccion(
@@ -263,6 +266,11 @@ namespace Controlador
                 _recolectoresActivos.Remove(aldeano);
                 aldeano.Estado = EstadoUnidad.Idle;
             }
+
+            // Si terminó solo (yacimiento vacío o aldeano muerto), avisa al rival para
+            // que su copia también vuelva a Idle. Si lo detuvieron, ya avisó DetenerRecoleccion.
+            if (terminoSolo)
+                EnviarPorRed($"RECOLECTAR;{aldeano.PosicionX};{aldeano.PosicionY};0");
         }
 
         private void EntregarRecurso(TipoRecurso tipo, int cantidad)
@@ -485,6 +493,21 @@ namespace Controlador
                         JugadorEnemigo.AgregarUnidad(DatosDelJuego.CrearUnidad(tipo, ux, uy));
                         GestorArchivos.RegistrarAccion(JugadorEnemigo.Nombre, "Red",
                             $"Rival entrenó {tipo} en ({ux},{uy}).");
+                        break;
+                    }
+
+                    case "RECOLECTAR":
+                    {
+                        // RECOLECTAR;x;y;1|0  → el rival encendió/apagó la recolección de su aldeano.
+                        if (!int.TryParse(p[1], out int rx) || !int.TryParse(p[2], out int ry) ||
+                            !int.TryParse(p[3], out int flag)) return;
+                        Unidad enemigo = JugadorEnemigo.Unidades.FirstOrDefault(
+                            u => u.PosicionX == rx && u.PosicionY == ry);
+                        // Solo reflejamos el estado visual: NO se lanza otro bucle (eso ya pasa en el lado del rival).
+                        if (enemigo == null || !enemigo.EstaViva || !enemigo.EsRecolector) return;
+                        enemigo.Estado = flag == 1 ? EstadoUnidad.Recolectando : EstadoUnidad.Idle;
+                        GestorArchivos.RegistrarAccion(JugadorEnemigo.Nombre, "Red",
+                            $"Rival {(flag == 1 ? "empezó a recolectar" : "detuvo la recolección")} en ({rx},{ry}).");
                         break;
                     }
                 }
