@@ -1,5 +1,11 @@
 namespace Modelo
 {
+    // TODO PRÓXIMA SESIÓN (prioridad) — dejado como nota por el equipo:
+    //   Eliminar el sistema POR TURNOS y pasar a CONCURRENCIA TOTAL estilo RTS
+    //   (nada de NumeroTurno/JugadorActivo: todos los jugadores juegan a la vez).
+    //   Implica mucha más concurrencia: acciones simultáneas de ambos jugadores
+    //   (mover, construir, entrenar, recolectar, atacar) sincronizadas por red,
+    //   y los ITEMS del equipo (pasivos, temporales, consumibles, equipables).
     public class Partida
     {
         public bool EnEjecucion { get; set; }
