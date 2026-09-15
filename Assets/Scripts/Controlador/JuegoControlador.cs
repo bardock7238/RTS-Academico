@@ -31,8 +31,18 @@ namespace Controlador
         // suma 1 segundo por cada segundo real. Se cancela con este token.
         private readonly CancellationTokenSource _ctsReloj = new CancellationTokenSource();
 
+        // ---- Items en el mapa (spawner concurrente del host) ----
+        private readonly bool _esHost;                 // Solo el host siembra items.
+        private readonly Random _rng = new Random();
+        private readonly CancellationTokenSource _ctsSpawner = new CancellationTokenSource();
+        private readonly List<Item> _itemsGlobales = new List<Item>();
+
+        // La Vista lee esto (vía hilo principal) para pintar los items en el mapa.
+        public List<Item> ItemsVisibles => _itemsGlobales;
+
         public JuegoControlador(string nombreJugador, bool localArriba = true)
         {
+            _esHost = localArriba;
             JugadorLocal = new Jugador(nombreJugador);
             JugadorEnemigo = new Jugador("Enemigo");
             Tablero = new Mapa();
@@ -41,6 +51,11 @@ namespace Controlador
             // [Concurrencia] RTS en tiempo real: desde el arranque, un Task de fondo
             // marca los segundos de partida mientras esta siga en ejecución.
             _ = IniciarRelojAsync();
+
+            // [Concurrencia] El host SIEMBRA items solos en el mapa; su Task anuncia
+            // cada colocación por red para que el espejo del cliente vea lo mismo.
+            if (_esHost)
+                _ = IniciarSpawnerItemsAsync();
 
             // Cada instancia coloca a SU jugador en su lado. El host (localArriba = true)
             // vive arriba; el cliente (localArriba = false) vive abajo. Así las copias
@@ -265,6 +280,9 @@ namespace Controlador
                     int cantidad = recurso.Extraer(cantidadPorCiclo);
                     if (cantidad <= 0) { terminoSolo = true; break; }
 
+                    // [Items] Pasivo Herramientas: +5% de lo recolectado por ciclo.
+                    cantidad += (int)Math.Round(cantidad * JugadorLocal.BonusRecoleccion);
+
                     EntregarRecurso(recurso.Tipo, cantidad);
                     GestorArchivos.RegistrarAccion(
                         JugadorLocal.Nombre,
@@ -308,9 +326,15 @@ namespace Controlador
                 if (distancia > atacante.RangoAtaque) return false; // fuera de alcance
 
                 atacante.Estado = EstadoUnidad.Atacando;
-                enemigo.RecibirDano(atacante.Ataque);
 
-                int danoReal = Math.Max(0, atacante.Ataque - enemigo.Defensa);
+                // [Items] Ataque con posible Espada (AtaqueTotal) y defensa con el
+                // posible Casco del defensor. El daño se calcula UNA vez y se manda:
+                // cada copia restará exactamente lo mismo (RecibirGolpe = daño plano).
+                int danoReal = Math.Max(0, atacante.AtaqueTotal -
+                    (enemigo.Defensa + (JugadorEnemigo.Unidades.Contains(enemigo)
+                        ? JugadorEnemigo.DefensaBonus : JugadorLocal.DefensaBonus)));
+                enemigo.RecibirGolpe(danoReal);
+
                 EnviarPorRed($"ATACAR;{atacante.PosicionX};{atacante.PosicionY};{enemigo.PosicionX};{enemigo.PosicionY};{danoReal}");
                 GestorArchivos.RegistrarAccion(
                     JugadorLocal.Nombre,
@@ -344,12 +368,13 @@ namespace Controlador
                 if (distancia > atacante.RangoAtaque) return false;
 
                 atacante.Estado = EstadoUnidad.Atacando;
-                edificioEnemigo.RecibirDano(atacante.Ataque);
+                // [Items] El ataque suma la Espada (AtaqueTotal) si va equipada.
+                edificioEnemigo.RecibirDano(atacante.AtaqueTotal);
 
                 // Se envía el ATAQUE (no el daño final): el rival aplica la MISMA fórmula
                 // con su copia del edificio y los dos lados coinciden.
                 EnviarPorRed($"ATACAR_EDIFICIO;{atacante.PosicionX};{atacante.PosicionY};" +
-                             $"{edificioEnemigo.PosicionX};{edificioEnemigo.PosicionY};{atacante.Ataque}");
+                             $"{edificioEnemigo.PosicionX};{edificioEnemigo.PosicionY};{atacante.AtaqueTotal}");
 
                 GestorArchivos.RegistrarAccion(JugadorLocal.Nombre, "Ataque",
                     $"{atacante.Tipo} atacó {edificioEnemigo.Tipo} (vida restante {edificioEnemigo.Vida}).");
@@ -464,6 +489,9 @@ namespace Controlador
         // "CONSTRUIR;Tipo;x;y"
         // "ENTRENAR;Tipo;x;y"
         // "SALUDO;nombre"
+        // "RECOLECTAR;x;y;1|0"
+        // "ITEM;TipoItem;x;y"
+        // "RECOGER_ITEM;TipoItem;x;y"
         private void ProcesarMensajeRed(string mensaje)
         {
             string[] p = mensaje.Split(';');
@@ -507,7 +535,7 @@ namespace Controlador
                         Unidad objetivo = JugadorLocal.Unidades.FirstOrDefault(
                             u => u.PosicionX == bx && u.PosicionY == by);
                         if (atacante == null || objetivo == null || !objetivo.EstaViva) return;
-                        objetivo.RecibirDano(dano);
+                        objetivo.RecibirGolpe(dano); // daño plano (ya calculado en el otro lado)
                         GestorArchivos.RegistrarAccion(JugadorEnemigo.Nombre, "Red",
                             $"Rival atacó a {objetivo.Tipo} ({dano} de daño).");
                         if (!objetivo.EstaViva)
@@ -583,6 +611,33 @@ namespace Controlador
                         }
                         break;
                     }
+
+                    case "ITEM":
+                    {
+                        // ITEM;Tipo;x;y → el host sembró un item; el espejo lo coloca igual.
+                        if (!Enum.TryParse(p[1], true, out TipoItem tipo) ||
+                            !int.TryParse(p[2], out int ix) || !int.TryParse(p[3], out int iy)) return;
+                        ColocarItem(tipo, ix, iy, enviarPorRed: false);
+                        GestorArchivos.RegistrarAccion(JugadorEnemigo.Nombre, "Red",
+                            $"Apareció {DatosDelJuego.NombreDe(tipo)} en ({ix},{iy}).");
+                        break;
+                    }
+
+                    case "RECOGER_ITEM":
+                    {
+                        // RECOGER_ITEM;Tipo;x;y → el rival tomó un item: yo dejo de
+                        // verlo en mi copia y replico los efectos compartidos (Casco).
+                        if (!Enum.TryParse(p[1], true, out TipoItem tipo) ||
+                            !int.TryParse(p[2], out int ix) || !int.TryParse(p[3], out int iy)) return;
+                        Item item = _itemsGlobales.FirstOrDefault(i => i.PosicionX == ix && i.PosicionY == iy);
+                        if (item == null) return;         // (idempotencia) ya lo había quitado
+                        item.Recogido = true;
+                        _itemsGlobales.Remove(item);
+                        AplicarEfectoItemEspejo(item);
+                        GestorArchivos.RegistrarAccion(JugadorEnemigo.Nombre, "Red",
+                            $"Rival recogió {DatosDelJuego.NombreDe(tipo)} en ({ix},{iy}).");
+                        break;
+                    }
                 }
             }
         }
@@ -605,6 +660,140 @@ namespace Controlador
                         EstadoPartida.TiempoJuegoSegundos++;
                 }
             }
+        }
+
+        // ============ ITEMS (objetos del mapa, generados por concurrencia) ============
+
+        // [Concurrencia] SPAWNER DE ITEMS: solo el host corre este Task. Cada
+        // IntervaloSpawnerMs siembra un item en una casilla libre y lo anuncia por
+        // red (ITEM;...) para que el espejo del cliente vea lo mismo. El mapa
+        // cambia SOLO, sin que nadie lo ordene.
+        private async Task IniciarSpawnerItemsAsync()
+        {
+            while (!_ctsSpawner.IsCancellationRequested)
+            {
+                try { await Task.Delay(IntervaloSpawnerMs, _ctsSpawner.Token); }
+                catch (TaskCanceledException) { break; } // Cancelado (fin de partida/aplicación).
+
+                lock (_lockJuego)
+                {
+                    if (!EstadoPartida.EnEjecucion) continue;
+                    (int X, int Y)? casilla = ElegirCasillaLibreParaItem();
+                    if (!casilla.HasValue) continue; // sin hueco, se espera al próximo latido
+                    TipoItem tipo = (TipoItem)_rng.Next(0, 4); // uno de los 4 al azar
+                    ColocarItem(tipo, casilla.Value.X, casilla.Value.Y, enviarPorRed: true);
+                }
+            }
+        }
+
+        // Busca 80 casillas al azar hasta encontrar una libre (sin unidad, edificio,
+        // yacimiento ni otro item). Devuelve null si el mapa está lleno.
+        private (int X, int Y)? ElegirCasillaLibreParaItem()
+        {
+            for (int intentos = 0; intentos < 80; intentos++)
+            {
+                int x = _rng.Next(0, Mapa.Ancho);
+                int y = _rng.Next(0, Mapa.Alto);
+                if (Tablero.EsCasillaLibre(x, y, JugadorLocal, JugadorEnemigo) &&
+                    !Tablero.CasillaTieneRecurso(x, y) &&
+                    !_itemsGlobales.Any(i => i.PosicionX == x && i.PosicionY == y))
+                    return (x, y);
+            }
+            return null;
+        }
+
+        // Pone un item en este mundo (host: lo siembra su spawner; la red: el espejo).
+        public bool ColocarItem(TipoItem tipo, int x, int y, bool enviarPorRed)
+        {
+            lock (_lockJuego)
+            {
+                if (!EstadoPartida.EnEjecucion) return false;
+                if (!Tablero.EsCoordenadaValida(x, y)) return false;
+                if (!Tablero.EsCasillaLibre(x, y, JugadorLocal, JugadorEnemigo)) return false;
+                if (Tablero.CasillaTieneRecurso(x, y)) return false;
+                if (_itemsGlobales.Any(i => i.PosicionX == x && i.PosicionY == y)) return false;
+
+                _itemsGlobales.Add(new Item(tipo, x, y));
+                if (enviarPorRed) EnviarPorRed($"ITEM;{tipo};{x};{y}");
+                return true;
+            }
+        }
+
+        // Una unidad adyacente al item lo recoge. Solo se aplica el efecto en la
+        // máquina del dueño; el rival solo refleja (elimina su copia + Casco espejo).
+        public bool RecogerItem(Unidad unidad, Item item)
+        {
+            lock (_lockJuego)
+            {
+                if (unidad == null || item == null || !EstadoPartida.EnEjecucion) return false;
+                if (item.Recogido || !_itemsGlobales.Contains(item)) return false; // (idempotencia)
+
+                int dx = Math.Abs(unidad.PosicionX - item.PosicionX);
+                int dy = Math.Abs(unidad.PosicionY - item.PosicionY);
+                if (dx > 1 || dy > 1) return false; // hay que estar adyacente, como el yacimiento
+
+                item.Recogido = true;
+                _itemsGlobales.Remove(item);
+
+                Jugador dueno = JugadorLocal.Unidades.Contains(unidad) ? JugadorLocal : JugadorEnemigo;
+                AplicarEfectoItem(item, unidad, dueno);
+
+                EnviarPorRed($"RECOGER_ITEM;{item.Tipo};{item.PosicionX};{item.PosicionY}");
+
+                GestorArchivos.RegistrarAccion(dueno.Nombre, "Item",
+                    $"{unidad.Tipo} recogió {DatosDelJuego.NombreDe(item.Tipo)} en ({item.PosicionX},{item.PosicionY}).");
+                return true;
+            }
+        }
+
+        // Efecto REAL del item para el dueño (corre dentro de lock(_lockJuego)).
+        private void AplicarEfectoItem(Item item, Unidad unidad, Jugador dueno)
+        {
+            switch (item.Tipo)
+            {
+                case TipoItem.Yogur:          // consumible: cura a todas las tropas griegas (por ahora todas)
+                    foreach (Unidad u in dueno.Unidades)
+                        if (u.EstaViva) u.Curarse(DatosDelJuego.CuraYogur);
+                    break;
+
+                case TipoItem.Casco:          // temporal: +defensa; otro Task lo quita a los X s
+                    dueno.DefensaBonus += DatosDelJuego.BonoDefensaCasco;
+                    _ = ExpiracionCascoAsync(dueno.Nombre);
+                    break;
+
+                case TipoItem.Espada:         // equipable: la lleva esa unidad (AtaqueTotal lo suma)
+                    unidad.Equipado = item;
+                    break;
+
+                case TipoItem.Herramientas:   // pasivo: +5% de recolección para siempre
+                    dueno.BonusRecoleccion += DatosDelJuego.BonusRecoleccionHerramientas;
+                    break;
+            }
+            dueno.ItemsRecogidos++;
+        }
+
+        // Espejo del rival: solo replica lo que afecta CÁLCULOS COMPARTIDOS (la
+        // defensa del Casco, que el atacante usa al calcular daño). El yogur, la
+        // espada y las herramientas son efectos locales del dueño.
+        private void AplicarEfectoItemEspejo(Item item)
+        {
+            if (item.Tipo == TipoItem.Casco)
+            {
+                JugadorEnemigo.DefensaBonus += DatosDelJuego.BonoDefensaCasco;
+                _ = ExpiracionCascoAsync(JugadorEnemigo.Nombre);
+            }
+        }
+
+        // [Concurrencia] El Casco es TEMPORAL: este Task lo apaga a los X segundos.
+        private async Task ExpiracionCascoAsync(string nombreJugador)
+        {
+            await Task.Delay(DuracionCascoSegundos * 1000);
+            lock (_lockJuego)
+            {
+                Jugador jug = JugadorLocal.Nombre == nombreJugador ? JugadorLocal : JugadorEnemigo;
+                if (jug != null) jug.DefensaBonus = Math.Max(0, jug.DefensaBonus - DatosDelJuego.BonoDefensaCasco);
+            }
+            GestorArchivos.RegistrarAccion(nombreJugador, "Item", "El Casco dejó de hacer efecto (defensa normal).");
         }
 
         // ============ AYUDANTES ============
@@ -651,5 +840,11 @@ namespace Controlador
         // [Concurrencia] Cada cuántos ms late el reloj. 1000 = 1 segundo real.
         // Las pruebas pueden bajarlo para ver el tiempo avanzar sin esperar.
         protected virtual int RelojTickMs => 1000;
+
+        // [Concurrencia] Cada cuántos ms siembra el spawner un item (host).
+        protected virtual int IntervaloSpawnerMs => 3000;
+
+        // Cuántos SEGUNDOS dura el Casco antes de que su Task lo apague.
+        protected virtual int DuracionCascoSegundos => 10;
     }
 }

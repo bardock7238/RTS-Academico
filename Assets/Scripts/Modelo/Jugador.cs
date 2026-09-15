@@ -12,6 +12,12 @@ namespace Modelo
         public List<Unidad> Unidades { get; set; }
         public List<Edificio> Edificios { get; set; } // Lista de estructuras del jugador
 
+        // ---- Efectos de items ----
+
+        public int DefensaBonus { get; set; }         // Temporal (Casco): lo quita un Task de expiración.
+        public double BonusRecoleccion { get; set; }  // Pasivo (Herramientas): +fracción por ciclo.
+        public int ItemsRecogidos { get; set; }       // Contador para el informe / logs.
+
         public Jugador(string nombre)
         {
             Nombre = nombre;

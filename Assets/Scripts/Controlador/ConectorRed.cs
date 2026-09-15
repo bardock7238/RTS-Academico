@@ -16,6 +16,10 @@ namespace Controlador
     //     sin congelar la partida.
     //   - El hilo principal del juego pregunta HayMensajes / RecibirMensaje y
     //     aplica cada acción. Eso lo hace el Controlador (Vista ya no).
+    //
+    // Protocolo (separador ';'): MOVER;x1;y1;x2;y2 | ATACAR;xa;ya;xb;yb;dano |
+    // ATACAR_EDIFICIO;xa;ya;xe;ye;ataque | CONSTRUIR;Tipo;x;y | ENTRENAR;Tipo;x;y |
+    // SALUDO;nombre | RECOLECTAR;x;y;1|0 | ITEM;TipoItem;x;y | RECOGER_ITEM;TipoItem;x;y
     public class ConectorRed : IDisposable
     {
         public bool EstaConectado { get; private set; }

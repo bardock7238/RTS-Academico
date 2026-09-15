@@ -20,6 +20,10 @@ namespace Modelo
         public int CapacidadRecoleccion { get; set; } // Cuánto recolecta por ciclo
         public EstadoUnidad Estado { get; set; }
 
+        // [Concurrencia] Item EQUIPABLE que lleva esta unidad (Espada). Lo asigna
+        // el Controlador al recogerlo y suma ataque a partir de ese momento.
+        public Item Equipado { get; set; }
+
         public Unidad()
         {
             Estado = EstadoUnidad.Idle;
@@ -30,10 +34,23 @@ namespace Modelo
         // El aldeano recolecta pero no combate.
         public bool PuedeAtacar => EstaViva && !EsRecolector;
 
+        // [Concurrencia/Items] Ataque real de la unidad, contando el item equipado.
+        // Ambos jugadores lo calculan igual en su copia → el daño por red coincide.
+        public int AtaqueTotal =>
+            Ataque + (Equipado?.Tipo == TipoItem.Espada ? DatosDelJuego.BonoAtaqueEspada : 0);
+
         public void RecibirDano(int cantidad)
         {
             if (Vida <= 0 || cantidad <= 0) return;
             Vida = Math.Max(0, Vida - Math.Max(0, cantidad - Defensa));
+        }
+
+        // [Concurrencia/Items] Golpe FLANO (la defensa ya se descontó al calcular el
+        // daño). Así la copia del atacante y la del rival restan lo MISMO al objetivo.
+        public void RecibirGolpe(int dano)
+        {
+            if (Vida <= 0 || dano <= 0) return;
+            Vida = Math.Max(0, Vida - dano);
         }
 
         public void Curarse(int cantidad)

@@ -221,5 +221,25 @@ namespace Modelo
                 new Recurso(TipoRecurso.Comida, 300, 11, 6)
             };
         }
+
+        // ---- ITEMS (objetos realistas del mapa: yogur, casco, espada, herramientas) ----
+
+        public const int CuraYogur = 50;              // Cuánta vida devuelve el Yogur
+        public const int BonoDefensaCasco = 10;       // +Defensa mientras dura el Casco
+        public const int BonoAtaqueEspada = 5;        // +Ataque mientras la lleva la unidad
+        public const double BonusRecoleccionHerramientas = 0.05; // +5% de recurso con Herramientas
+
+        // Nombre para logs y pantalla (el enum es técnico; esto es el "cartelito").
+        public static string NombreDe(TipoItem tipo)
+        {
+            switch (tipo)
+            {
+                case TipoItem.Yogur: return "Yogur";
+                case TipoItem.Casco: return "Casco";
+                case TipoItem.Espada: return "Espada";
+                case TipoItem.Herramientas: return "Herramientas";
+                default: return tipo.ToString();
+            }
+        }
     }
 }
