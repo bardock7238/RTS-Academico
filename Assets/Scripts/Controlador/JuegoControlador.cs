@@ -16,8 +16,9 @@ namespace Controlador
         public ConectorRed RedPartida { get; private set; }
         public string NombreRivalRed { get; private set; }
 
-        // Candado compartido: todo cambio a recursos/listas pasa por aquí para
-        // evitar condiciones de carrera cuando los hilos de recolección corren.
+        // [Concurrencia] Candado compartido: todo cambio a recursos/listas pasa por
+        // aquí para evitar condiciones de carrera cuando los hilos de fondo corren
+        // (recolección, entrenamiento, construcción, reloj y mensajes de red).
         private readonly object _lockJuego = new object();
 
         // Trabajos en segundo plano activos: para poder cancelarlos.
@@ -26,12 +27,20 @@ namespace Controlador
         private readonly Dictionary<Unidad, CancellationTokenSource> _recolectoresActivos =
             new Dictionary<Unidad, CancellationTokenSource>();
 
+        // [Concurrencia] Reloj del juego (RTS en tiempo real): un Task de fondo que
+        // suma 1 segundo por cada segundo real. Se cancela con este token.
+        private readonly CancellationTokenSource _ctsReloj = new CancellationTokenSource();
+
         public JuegoControlador(string nombreJugador, bool localArriba = true)
         {
             JugadorLocal = new Jugador(nombreJugador);
             JugadorEnemigo = new Jugador("Enemigo");
             Tablero = new Mapa();
             EstadoPartida = new Partida();
+
+            // [Concurrencia] RTS en tiempo real: desde el arranque, un Task de fondo
+            // marca los segundos de partida mientras esta siga en ejecución.
+            _ = IniciarRelojAsync();
 
             // Cada instancia coloca a SU jugador en su lado. El host (localArriba = true)
             // vive arriba; el cliente (localArriba = false) vive abajo. Así las copias
@@ -111,6 +120,7 @@ namespace Controlador
         }
 
         // 3. Entrenar Unidad: valida, cobra y lanza el "trabajo" en segundo plano.
+        // [Concurrencia] La Task no bloquea al usuario: la unidad aparece al terminar.
         public bool EntrenarUnidad(TipoUnidad tipo, TipoEdificio edificioOrigen)
         {
             lock (_lockJuego)
@@ -172,8 +182,8 @@ namespace Controlador
             }
         }
 
-        // La construcción avanza sola: tras los segundos del catálogo, el edificio
-        // queda operativo y ya puede entrenar. Se usa igual para el rival espejo.
+        // [Concurrencia] La obra avanza sola en segundo plano y completa el edificio;
+        // la misma Task se usa para el espejo del edificio rival en la otra máquina.
         private async Task ConstruccionTaskAsync(Edificio edificio, int segundos, string nombreDueno)
         {
             await EsperarConstruccion(segundos);
@@ -189,6 +199,8 @@ namespace Controlador
         }
 
         // 4. Recolectar recursos en segundo plano (un hilo por aldeano).
+        // [Concurrencia] Task de fondo + lock(_lockJuego) + CancellationToken:
+        // el aldeano trabaja, suma recursos y el jugador puede seguir jugando.
         public bool IniciarRecoleccion(Unidad aldeano, Recurso recurso)
         {
             lock (_lockJuego)
@@ -429,6 +441,8 @@ namespace Controlador
         }
 
         // La Vista llama esto en cada Update: aplica los mensajes que llegaron.
+        // [Concurrencia] Quien LLENA la cola es el hilo de escucha de la red;
+        // quien la VACÍA es el hilo del juego (aquí). Nunca se tocan entre sí.
         // Devuelve cuántos mensajes se procesaron.
         public int ProcesarMensajesRedPendientes()
         {
@@ -573,6 +587,26 @@ namespace Controlador
             }
         }
 
+        // ============ RELOJ DEL JUEGO (RTS en TIEMPO REAL, sin turnos) ============
+
+        // [Concurrencia] Bucle de fondo: espera 1 segundo real y suma 1 al marcador
+        // de la partida. Cada instancia (host y cliente) corre SU propio reloj, igual
+        // que corre su propia simulación; la red solo intercambia las acciones.
+        private async Task IniciarRelojAsync()
+        {
+            while (!_ctsReloj.IsCancellationRequested)
+            {
+                try { await Task.Delay(RelojTickMs, _ctsReloj.Token); }
+                catch (TaskCanceledException) { break; } // Cancelado (fin de partida/aplicación).
+
+                lock (_lockJuego)
+                {
+                    if (EstadoPartida.EnEjecucion)
+                        EstadoPartida.TiempoJuegoSegundos++;
+                }
+            }
+        }
+
         // ============ AYUDANTES ============
 
         private bool EstanAdyacentes(Unidad unidad, Recurso recurso)
@@ -613,5 +647,9 @@ namespace Controlador
         }
 
         protected virtual int CicloRecoleccionMs => 1000;
+
+        // [Concurrencia] Cada cuántos ms late el reloj. 1000 = 1 segundo real.
+        // Las pruebas pueden bajarlo para ver el tiempo avanzar sin esperar.
+        protected virtual int RelojTickMs => 1000;
     }
 }

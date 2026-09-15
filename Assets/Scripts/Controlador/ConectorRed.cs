@@ -24,7 +24,8 @@ namespace Controlador
         // Se dispara CADA vez que se consigue una conexión (la inicial y cada reconexión).
         public event Action AlConectar;
 
-        // Cola segura entre hilos: diferencias de punto de la red → hilo de juego.
+        // [Concurrencia] Cola segura entre hilos: la llena el hilo de escucha de la
+        // red; la vacía el hilo del juego. Nunca se disputan la misma escritura.
         private readonly ConcurrentQueue<string> _recibidos = new ConcurrentQueue<string>();
 
         private TcpListener _servidor;   // Solo si soy el host (espero llamadas).
@@ -34,7 +35,8 @@ namespace Controlador
         private Thread _hiloEscucha;
         private volatile bool _ejecutando;
 
-        // Dos hilos pueden querer escribir a la vez (juego + otro hilo); se serializan aquí.
+        // [Concurrencia] Dos hilos pueden querer escribir a la vez (juego + otro hilo);
+        // este candado serializa los envíos por el mismo tubo TCP.
         private readonly object _lockEnvio = new object();
 
         public bool HayMensajes => !_recibidos.IsEmpty;
@@ -64,6 +66,8 @@ namespace Controlador
             return true;
         }
 
+        // [Concurrencia] Hilo servidor: accepta, lee (bloqueante), y si el rival cae,
+        // vuelve en bucle a la casilla — reconexión sin morir el hilo.
         private void CicloServidor()
         {
             while (_ejecutando)
@@ -96,6 +100,8 @@ namespace Controlador
             return true;
         }
 
+        // [Concurrencia] Hilo cliente: conecta, lee (bloqueante), y si el host se cae,
+        // duerme 1 s y reintenta — reconexión automática en segundo plano.
         private void CicloCliente(string ip, int puerto)
         {
             while (_ejecutando)
