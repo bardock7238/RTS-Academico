@@ -1,7 +1,7 @@
 using System;
 using System.IO;
 
-namespace Controlador
+namespace Modelo
 {
     // Maneja configuracion.txt, log_partida.txt y resultado_final.txt.
     // No depende de UnityEngine, así que es fácil de probar fuera de Unity.

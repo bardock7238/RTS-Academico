@@ -1,422 +1,126 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Threading;
 using System.Threading.Tasks;
 using Modelo;
 
 namespace Controlador
 {
+    // ============================================================================
+    //  CONTROLADOR (capa delgada)
+    //  ----------------------------------------------------------------------------
+    //  Aquí NO vive la concurrencia: el motor concurrente está en Modelo/Simulacion
+    //  (reloj, entrenamiento, construcción, recolección, spawner de items y el
+    //  candado del mundo). Este Controlador:
+    //     1. Expone el mundo (los objetos ENTEROS vienen del Modelo).
+    //     2. Traduce acciones del usuario → métodos del Modelo (que se andan solos).
+    //     3. Traduce mensajes de red → métodos "Espejo" del Modelo.
+    //     4. Anuncia al rival las acciones (enviar por TCP) y escribe logs.
+    //
+    //  El único "hilo" que sigue aquí es el del socket TCP (ConectorRed), que ahora
+    //  también vive en Modelo, y la cola que llena ese hilo; el procesamiento de los
+    //  mensajes lo hace la Vista desde el hilo principal (ver ProcesarMensajesRedPendientes).
+    //
+    //  Los tiempos (cuánto tarda un entrenamiento, cada cuánto late el reloj...) los
+    //  define el Modelo (Simulacion); el Controlador solo pide y avisa.
+    // ============================================================================
     public class JuegoControlador
     {
-        public Jugador JugadorLocal { get; private set; }
-        public Jugador JugadorEnemigo { get; private set; }
-        public Mapa Tablero { get; private set; }
-        public Partida EstadoPartida { get; private set; }
+        // [Concurrencia aquí? NO.] El cerebro concurrente ES el Modelo.
+        // Exponemos el motor para que la Vista y las pruebas configuren la simulación.
+        public Simulacion Motor { get; }
+
+        public Jugador JugadorLocal => Motor.JugadorLocal;
+        public Jugador JugadorEnemigo => Motor.JugadorEnemigo;
+        public Mapa Tablero => Motor.Tablero;
+        public Partida EstadoPartida => Motor.EstadoPartida;
+        public List<Item> ItemsVisibles => Motor.ItemsVisibles;
+
         public ConectorRed RedPartida { get; private set; }
         public string NombreRivalRed { get; private set; }
 
-        // [Concurrencia] Candado compartido: todo cambio a recursos/listas pasa por
-        // aquí para evitar condiciones de carrera cuando los hilos de fondo corren
-        // (recolección, entrenamiento, construcción, reloj y mensajes de red).
-        private readonly object _lockJuego = new object();
-
-        // Trabajos en segundo plano activos: para poder cancelarlos.
-        private readonly Dictionary<TipoUnidad, CancellationTokenSource> _entrenamientosActivos =
-            new Dictionary<TipoUnidad, CancellationTokenSource>();
-        private readonly Dictionary<Unidad, CancellationTokenSource> _recolectoresActivos =
-            new Dictionary<Unidad, CancellationTokenSource>();
-
-        // [Concurrencia] Reloj del juego (RTS en tiempo real): un Task de fondo que
-        // suma 1 segundo por cada segundo real. Se cancela con este token.
-        private readonly CancellationTokenSource _ctsReloj = new CancellationTokenSource();
-
-        // ---- Items en el mapa (spawner concurrente del host) ----
-        private readonly bool _esHost;                 // Solo el host siembra items.
-        private readonly Random _rng = new Random();
-        private readonly CancellationTokenSource _ctsSpawner = new CancellationTokenSource();
-        private readonly List<Item> _itemsGlobales = new List<Item>();
-
-        // La Vista lee esto (vía hilo principal) para pintar los items en el mapa.
-        public List<Item> ItemsVisibles => _itemsGlobales;
-
         public JuegoControlador(string nombreJugador, bool localArriba = true)
         {
-            _esHost = localArriba;
-            JugadorLocal = new Jugador(nombreJugador);
-            JugadorEnemigo = new Jugador("Enemigo");
-            Tablero = new Mapa();
-            EstadoPartida = new Partida();
+            // El Modelo arma el mundo entero (jugadores, mapa, partida, posiciones)
+            // y arranca SUS tareas de fondo (reloj y, si soy host, el spawner).
+            Motor = new Simulacion(nombreJugador, localArriba);
 
-            // [Concurrencia] RTS en tiempo real: desde el arranque, un Task de fondo
-            // marca los segundos de partida mientras esta siga en ejecución.
-            _ = IniciarRelojAsync();
-
-            // [Concurrencia] El host SIEMBRA items solos en el mapa; su Task anuncia
-            // cada colocación por red para que el espejo del cliente vea lo mismo.
-            if (_esHost)
-                _ = IniciarSpawnerItemsAsync();
-
-            // Cada instancia coloca a SU jugador en su lado. El host (localArriba = true)
-            // vive arriba; el cliente (localArriba = false) vive abajo. Así las copias
-            // de ambos mundos concuerdan y la red puede espejar movimientos por casilla.
-            int centroLocalY = localArriba ? 1 : 13;
-            int centroEnemigoY = localArriba ? 13 : 1;
-            int aldeanoLocalY = localArriba ? 1 : 13;
-            int aldeanoEnemigoY = localArriba ? 13 : 1;
-
-            Edificio centroLocal = DatosDelJuego.CrearCentroUrbano(7, centroLocalY);
-            Edificio centroEnemigo = DatosDelJuego.CrearCentroUrbano(7, centroEnemigoY);
-            JugadorLocal.AgregarEdificio(centroLocal);
-            JugadorEnemigo.AgregarEdificio(centroEnemigo);
-
-            JugadorLocal.AgregarUnidad(DatosDelJuego.CrearUnidad(TipoUnidad.Aldeano, 6, aldeanoLocalY));
-            JugadorEnemigo.AgregarUnidad(DatosDelJuego.CrearUnidad(TipoUnidad.Aldeano, 6, aldeanoEnemigoY));
-
-            GestorArchivos.GuardarConfiguracionInicial(
-                $"Jugador: {nombreJugador} | Mapa: {Mapa.Ancho}x{Mapa.Alto} | " +
-                $"Centro local ({centroLocal.PosicionX},{centroLocal.PosicionY}) | " +
-                $"Centro enemigo ({centroEnemigo.PosicionX},{centroEnemigo.PosicionY})");
-            GestorArchivos.RegistrarAccion(nombreJugador, "Inicio", "Partida inicializada.");
+            // Cuando el Modelo produce algo que debe anunciarse por red (un ataque
+            // con su daño calculado, una unidad que terminó de entrenar, un item que
+            // apareció solo, un aldeano que terminó su cosecha) lo reenviamos aquí.
+            Motor.ParaTransmitir += EnviarPorRed;
         }
 
-        // ============ ACCIONES DE JUEGO ============
+        // ============ ACCIONES DE JUEGO (todas delegan al Modelo) ============
 
         // 1. Mover Unidad
         public bool MoverUnidad(Unidad unidad, int nuevoX, int nuevoY)
         {
-            lock (_lockJuego)
-            {
-                if (unidad == null) return false;
-                if (!Tablero.EsCoordenadaValida(nuevoX, nuevoY)) return false;
-                if (!Tablero.EsCasillaLibre(nuevoX, nuevoY, JugadorLocal, JugadorEnemigo)) return false;
+            int origenX = unidad?.PosicionX ?? 0;
+            int origenY = unidad?.PosicionY ?? 0;
+            if (!Motor.MoverUnidad(unidad, nuevoX, nuevoY)) return false;
 
-                int origenX = unidad.PosicionX;
-                int origenY = unidad.PosicionY;
-                unidad.MoverA(nuevoX, nuevoY);
-
-                EnviarPorRed($"MOVER;{origenX};{origenY};{nuevoX};{nuevoY}");
-
-                GestorArchivos.RegistrarAccion(
-                    JugadorLocal.Nombre,
-                    "Mover",
-                    $"{unidad.Tipo} de ({origenX},{origenY}) a ({nuevoX},{nuevoY})");
-                return true;
-            }
+            EnviarPorRed($"MOVER;{origenX};{origenY};{nuevoX};{nuevoY}");
+            return true;
         }
 
-        // 2. Construir Edificio (valida coordenadas, choque, yacimiento y costos del catálogo)
+        // 2. Construir Edificio
         public bool ConstruirEdificio(TipoEdificio tipo, int x, int y)
         {
-            lock (_lockJuego)
-            {
-                if (!Tablero.EsCoordenadaValida(x, y)) return false;
-                if (Tablero.CasillaTieneRecurso(x, y)) return false;
-                if (!Tablero.EsCasillaLibre(x, y, JugadorLocal, JugadorEnemigo)) return false;
+            if (!Motor.ConstruirEdificio(tipo, x, y)) return false;
 
-                EdificioConfig config = DatosDelJuego.EdificiosBase[tipo];
-                if (!JugadorLocal.Gastar(config.CostoMadera, config.CostoOro, config.CostoComida))
-                    return false;
-
-                Edificio nuevoEdificio = DatosDelJuego.CrearEdificio(tipo, x, y);
-                JugadorLocal.AgregarEdificio(nuevoEdificio);
-
-                EnviarPorRed($"CONSTRUIR;{tipo};{x};{y}");
-
-                // La obra avanza sola en segundo plano y completa el edificio.
-                _ = ConstruccionTaskAsync(nuevoEdificio, config.TiempoConstruccionSegundos, JugadorLocal.Nombre);
-
-                GestorArchivos.RegistrarAccion(
-                    JugadorLocal.Nombre,
-                    "Construir",
-                    $"{tipo} en ({x},{y}). Madera: {JugadorLocal.Madera}, Oro: {JugadorLocal.Oro}, Comida: {JugadorLocal.Comida}");
-                return true;
-            }
+            EnviarPorRed($"CONSTRUIR;{tipo};{x};{y}");
+            return true;
         }
 
-        // 3. Entrenar Unidad: valida, cobra y lanza el "trabajo" en segundo plano.
-        // [Concurrencia] La Task no bloquea al usuario: la unidad aparece al terminar.
+        // 3. Entrenar Unidad: el Modelo lanza el "trabajo"; al terminar avisa por
+        // su evento (ENTRENAR;...) y esta capa lo manda por red.
         public bool EntrenarUnidad(TipoUnidad tipo, TipoEdificio edificioOrigen)
         {
-            lock (_lockJuego)
-            {
-                Edificio edificio = JugadorLocal.Edificios.FirstOrDefault(e => e.Tipo == edificioOrigen);
-                if (edificio == null || !edificio.PuedeEntrenar(tipo)) return false;
-                if (_entrenamientosActivos.ContainsKey(tipo)) return false; // ya hay uno en curso
-
-                UnidadConfig config = DatosDelJuego.UnidadesBase[tipo];
-                if (!JugadorLocal.Gastar(config.CostoMadera, config.CostoOro, config.CostoComida))
-                    return false;
-
-                CancellationTokenSource cts = new CancellationTokenSource();
-                _entrenamientosActivos[tipo] = cts;
-
-                // Lanzamos la tarea y seguimos: no bloqueamos al usuario.
-                _ = EntrenamientoTaskAsync(tipo, config, cts.Token);
-
-                GestorArchivos.RegistrarAccion(
-                    JugadorLocal.Nombre,
-                    "Entrenar",
-                    $"{tipo} iniciado en {edificioOrigen}.");
-                return true;
-            }
+            return Motor.EntrenarUnidad(tipo, edificioOrigen);
         }
 
-        private async Task EntrenamientoTaskAsync(TipoUnidad tipo, UnidadConfig config, CancellationToken token)
-        {
-            bool completado = true;
-            try
-            {
-                await EsperarEntrenamiento(config.TiempoEntrenamientoSegundos, token);
-            }
-            catch (TaskCanceledException)
-            {
-                completado = false;
-            }
-
-            lock (_lockJuego)
-            {
-                _entrenamientosActivos.Remove(tipo);
-                if (!completado || token.IsCancellationRequested) return;
-
-                Unidad nueva = DatosDelJuego.CrearUnidad(tipo, 0, 0);
-                Edificio origen = JugadorLocal.Edificios.FirstOrDefault(
-                    e => e.UnidadesEntrenables.Contains(tipo) && e.EstaOperativo);
-                if (origen != null)
-                {
-                    (int x, int y) = ObtenerPosicionDeSalida(origen);
-                    nueva.MoverA(x, y);
-                }
-
-                JugadorLocal.AgregarUnidad(nueva);
-                EnviarPorRed($"ENTRENAR;{tipo};{nueva.PosicionX};{nueva.PosicionY}");
-                GestorArchivos.RegistrarAccion(
-                    JugadorLocal.Nombre,
-                    "Entrenar",
-                    $"{tipo} listo en ({nueva.PosicionX},{nueva.PosicionY}).");
-            }
-        }
-
-        // [Concurrencia] La obra avanza sola en segundo plano y completa el edificio;
-        // la misma Task se usa para el espejo del edificio rival en la otra máquina.
-        private async Task ConstruccionTaskAsync(Edificio edificio, int segundos, string nombreDueno)
-        {
-            await EsperarConstruccion(segundos);
-
-            lock (_lockJuego)
-            {
-                edificio.CompletarConstruccion();
-                GestorArchivos.RegistrarAccion(
-                    nombreDueno,
-                    "Construir",
-                    $"{edificio.Tipo} en ({edificio.PosicionX},{edificio.PosicionY}) terminado.");
-            }
-        }
-
-        // 4. Recolectar recursos en segundo plano (un hilo por aldeano).
-        // [Concurrencia] Task de fondo + lock(_lockJuego) + CancellationToken:
-        // el aldeano trabaja, suma recursos y el jugador puede seguir jugando.
+        // 4. Recolectar recursos en segundo plano.
         public bool IniciarRecoleccion(Unidad aldeano, Recurso recurso)
         {
-            lock (_lockJuego)
-            {
-                if (aldeano == null || recurso == null) return false;
-                if (!aldeano.EsRecolector || !aldeano.EstaViva) return false;
-                if (recurso.EstaAgotado) return false;
-                if (!Tablero.RecursosEnMapa.Contains(recurso)) return false;
-                if (_recolectoresActivos.ContainsKey(aldeano)) return false; // ya trabaja
-                if (!EstanAdyacentes(aldeano, recurso)) return false;
+            if (!Motor.IniciarRecoleccion(aldeano, recurso)) return false;
 
-                aldeano.Estado = EstadoUnidad.Recolectando;
-                CancellationTokenSource cts = new CancellationTokenSource();
-                _recolectoresActivos[aldeano] = cts;
-
-                _ = RecoleccionTaskAsync(aldeano, recurso, cts.Token);
-                EnviarPorRed($"RECOLECTAR;{aldeano.PosicionX};{aldeano.PosicionY};1");
-
-                GestorArchivos.RegistrarAccion(
-                    JugadorLocal.Nombre,
-                    "Recolectar",
-                    $"{aldeano.Tipo} recolecta {recurso.Tipo} en ({recurso.PosicionX},{recurso.PosicionY}).");
-                return true;
-            }
+            EnviarPorRed($"RECOLECTAR;{aldeano.PosicionX};{aldeano.PosicionY};1");
+            return true;
         }
 
         public bool DetenerRecoleccion(Unidad aldeano)
         {
-            lock (_lockJuego)
-            {
-                if (_recolectoresActivos.TryGetValue(aldeano, out CancellationTokenSource cts))
-                {
-                    cts.Cancel();
-                    EnviarPorRed($"RECOLECTAR;{aldeano.PosicionX};{aldeano.PosicionY};0");
-                    return true;
-                }
-                return false;
-            }
+            if (!Motor.DetenerRecoleccion(aldeano)) return false;
+
+            EnviarPorRed($"RECOLECTAR;{aldeano.PosicionX};{aldeano.PosicionY};0");
+            return true;
         }
 
-        public bool EstaRecolectando(Unidad aldeano)
+        public bool EstaRecolectando(Unidad aldeano) => Motor.EstaRecolectando(aldeano);
+
+        // 5. Atacar / 5b. Atacar Edificio. El daño se calcula DENTRO del Modelo y
+        // su evento lo anuncia por red con los datos exactos que se aplicarán.
+        public bool Atacar(Unidad atacante, Unidad enemigo) => Motor.Atacar(atacante, enemigo);
+        public bool AtacarEdificio(Unidad atacante, Edificio edificioEnemigo) => Motor.AtacarEdificio(atacante, edificioEnemigo);
+
+        public void VerificarGanador() => Motor.VerificarGanador();
+
+        // Items: el Modelo ejecuta la lógica; esta capa anuncia por red.
+        public bool ColocarItem(TipoItem tipo, int x, int y, bool enviarPorRed)
         {
-            lock (_lockJuego)
-            {
-                return _recolectoresActivos.ContainsKey(aldeano);
-            }
+            if (!Motor.ColocarItem(tipo, x, y)) return false;
+
+            if (enviarPorRed) EnviarPorRed($"ITEM;{tipo};{x};{y}");
+            return true;
         }
 
-        private async Task RecoleccionTaskAsync(Unidad aldeano, Recurso recurso, CancellationToken token)
+        public bool RecogerItem(Unidad unidad, Item item)
         {
-            int cantidadPorCiclo = DatosDelJuego.UnidadesBase[aldeano.Tipo].CapacidadRecoleccion;
-            bool terminoSolo = false; // True si dejó de recolectar por sí mismo (no por detenerlo).
+            if (!Motor.RecogerItem(unidad, item)) return false;
 
-            while (true)
-            {
-                try { await Task.Delay(CicloRecoleccionMs, token); }
-                catch (TaskCanceledException) { break; } // Lo detuvieron: el 0 ya salió de DetenerRecoleccion.
-
-                lock (_lockJuego)
-                {
-                    if (!aldeano.EstaViva || recurso.EstaAgotado) { terminoSolo = true; break; }
-                    int cantidad = recurso.Extraer(cantidadPorCiclo);
-                    if (cantidad <= 0) { terminoSolo = true; break; }
-
-                    // [Items] Pasivo Herramientas: +5% de lo recolectado por ciclo.
-                    cantidad += (int)Math.Round(cantidad * JugadorLocal.BonusRecoleccion);
-
-                    EntregarRecurso(recurso.Tipo, cantidad);
-                    GestorArchivos.RegistrarAccion(
-                        JugadorLocal.Nombre,
-                        "Recolectar",
-                        $"+{cantidad} de {recurso.Tipo}. Total {JugadorLocal.Oro}/{JugadorLocal.Madera}/{JugadorLocal.Comida}");
-                }
-            }
-
-            lock (_lockJuego)
-            {
-                _recolectoresActivos.Remove(aldeano);
-                aldeano.Estado = EstadoUnidad.Idle;
-            }
-
-            // Si terminó solo (yacimiento vacío o aldeano muerto), avisa al rival para
-            // que su copia también vuelva a Idle. Si lo detuvieron, ya avisó DetenerRecoleccion.
-            if (terminoSolo)
-                EnviarPorRed($"RECOLECTAR;{aldeano.PosicionX};{aldeano.PosicionY};0");
-        }
-
-        private void EntregarRecurso(TipoRecurso tipo, int cantidad)
-        {
-            switch (tipo)
-            {
-                case TipoRecurso.Oro: JugadorLocal.Recibir(0, cantidad, 0); break;
-                case TipoRecurso.Madera: JugadorLocal.Recibir(cantidad, 0, 0); break;
-                case TipoRecurso.Comida: JugadorLocal.Recibir(0, 0, cantidad); break;
-            }
-        }
-
-        // 5. Atacar (valida rango y usa la defensa del Modelo).
-        public bool Atacar(Unidad atacante, Unidad enemigo)
-        {
-            lock (_lockJuego)
-            {
-                if (atacante == null || enemigo == null) return false;
-                if (!atacante.PuedeAtacar || !enemigo.EstaViva) return false;
-
-                int distancia = Math.Abs(atacante.PosicionX - enemigo.PosicionX)
-                              + Math.Abs(atacante.PosicionY - enemigo.PosicionY);
-                if (distancia > atacante.RangoAtaque) return false; // fuera de alcance
-
-                atacante.Estado = EstadoUnidad.Atacando;
-
-                // [Items] Ataque con posible Espada (AtaqueTotal) y defensa con el
-                // posible Casco del defensor. El daño se calcula UNA vez y se manda:
-                // cada copia restará exactamente lo mismo (RecibirGolpe = daño plano).
-                int danoReal = Math.Max(0, atacante.AtaqueTotal -
-                    (enemigo.Defensa + (JugadorEnemigo.Unidades.Contains(enemigo)
-                        ? JugadorEnemigo.DefensaBonus : JugadorLocal.DefensaBonus)));
-                enemigo.RecibirGolpe(danoReal);
-
-                EnviarPorRed($"ATACAR;{atacante.PosicionX};{atacante.PosicionY};{enemigo.PosicionX};{enemigo.PosicionY};{danoReal}");
-                GestorArchivos.RegistrarAccion(
-                    JugadorLocal.Nombre,
-                    "Ataque",
-                    $"{atacante.Tipo} infligió {danoReal} de daño a {enemigo.Tipo}.");
-
-                if (!enemigo.EstaViva)
-                {
-                    JugadorEnemigo.EliminarUnidad(enemigo);
-                    GestorArchivos.RegistrarAccion(
-                        JugadorLocal.Nombre,
-                        "Ataque",
-                        $"Impacto - {enemigo.Tipo} enemigo destruido");
-                    VerificarGanador();
-                }
-                return true;
-            }
-        }
-
-        // 5b. Atacar Edificio (permite destruir estructuras y ganar por Centro Urbano).
-        public bool AtacarEdificio(Unidad atacante, Edificio edificioEnemigo)
-        {
-            lock (_lockJuego)
-            {
-                if (atacante == null || edificioEnemigo == null) return false;
-                if (!atacante.PuedeAtacar || !edificioEnemigo.EstaViva) return false;
-                if (!JugadorEnemigo.Edificios.Contains(edificioEnemigo)) return false;
-
-                int distancia = Math.Abs(atacante.PosicionX - edificioEnemigo.PosicionX)
-                              + Math.Abs(atacante.PosicionY - edificioEnemigo.PosicionY);
-                if (distancia > atacante.RangoAtaque) return false;
-
-                atacante.Estado = EstadoUnidad.Atacando;
-                // [Items] El ataque suma la Espada (AtaqueTotal) si va equipada.
-                edificioEnemigo.RecibirDano(atacante.AtaqueTotal);
-
-                // Se envía el ATAQUE (no el daño final): el rival aplica la MISMA fórmula
-                // con su copia del edificio y los dos lados coinciden.
-                EnviarPorRed($"ATACAR_EDIFICIO;{atacante.PosicionX};{atacante.PosicionY};" +
-                             $"{edificioEnemigo.PosicionX};{edificioEnemigo.PosicionY};{atacante.AtaqueTotal}");
-
-                GestorArchivos.RegistrarAccion(JugadorLocal.Nombre, "Ataque",
-                    $"{atacante.Tipo} atacó {edificioEnemigo.Tipo} (vida restante {edificioEnemigo.Vida}).");
-
-                if (!edificioEnemigo.EstaViva)
-                {
-                    JugadorEnemigo.EliminarEdificio(edificioEnemigo);
-                    GestorArchivos.RegistrarAccion(JugadorLocal.Nombre, "Ataque",
-                        $"{edificioEnemigo.Tipo} enemigo destruido.");
-                    VerificarGanador();
-                }
-                return true;
-            }
-        }
-
-        // ============ VERIFICACIÓN DE GANADOR (revisa a AMBOS jugadores) ============
-
-        public void VerificarGanador()
-        {
-            if (JugadorDerrotado(JugadorEnemigo))
-            {
-                FinalizarPartida(JugadorLocal);
-            }
-            else if (JugadorDerrotado(JugadorLocal))
-            {
-                FinalizarPartida(JugadorEnemigo);
-            }
-        }
-
-        private bool JugadorDerrotado(Jugador jugador)
-        {
-            bool sinCentroUrbano = !jugador.Edificios.Exists(
-                e => e.Tipo == TipoEdificio.CentroUrbano && e.Vida > 0);
-            bool sinUnidades = jugador.Unidades.Count == 0;
-            return sinCentroUrbano || sinUnidades;
-        }
-
-        private void FinalizarPartida(Jugador ganador)
-        {
-            EstadoPartida.Finalizar(ganador.Nombre);
-            GestorArchivos.RegistrarAccion(ganador.Nombre, "Victoria", "Partida terminada.");
-            GestorArchivos.GuardarResultadoFinal($"¡Ganador: {ganador.Nombre}!");
+            EnviarPorRed($"RECOGER_ITEM;{item.Tipo};{item.PosicionX};{item.PosicionY}");
+            return true;
         }
 
         // ============ RED (sockets TCP) ============
@@ -466,9 +170,9 @@ namespace Controlador
         }
 
         // La Vista llama esto en cada Update: aplica los mensajes que llegaron.
-        // [Concurrencia] Quien LLENA la cola es el hilo de escucha de la red;
-        // quien la VACÍA es el hilo del juego (aquí). Nunca se tocan entre sí.
-        // Devuelve cuántos mensajes se procesaron.
+        // [Concurrencia] Quien LLENA la cola es el hilo de escucha de la red
+        // (vive en Modelo/ConectorRed); quien la VACÍA es el hilo del juego (aquí).
+        // Nunca se tocan entre sí. Devuelve cuántos mensajes se procesaron.
         public int ProcesarMensajesRedPendientes()
         {
             if (RedPartida == null) return 0;
@@ -492,359 +196,113 @@ namespace Controlador
         // "RECOLECTAR;x;y;1|0"
         // "ITEM;TipoItem;x;y"
         // "RECOGER_ITEM;TipoItem;x;y"
+        //
+        // Cada mensaje se traduce a un método "Espejo" del Modelo, que se encarga de
+        // su candado y de mutar la copia rival. Aquí solo parseamos y llevamos cuenta.
         private void ProcesarMensajeRed(string mensaje)
         {
             string[] p = mensaje.Split(';');
             if (p.Length < 2) return;
 
-            lock (_lockJuego)
+            switch (p[0])
             {
-                switch (p[0])
+                case "SALUDO":
+                    NombreRivalRed = p[1];
+                    Motor.EstablecerNombreRival(p[1]); // El rival presenta su nombre real.
+                    GestorArchivos.RegistrarAccion(JugadorEnemigo.Nombre, "Red",
+                        $"Rival conectado: {p[1]}");
+                    break;
+
+                case "MOVER":
                 {
-                    case "SALUDO":
-                        NombreRivalRed = p[1];
-                        JugadorEnemigo.Nombre = p[1]; // El rival presenta su nombre real.
+                    if (!int.TryParse(p[1], out int ox) || !int.TryParse(p[2], out int oy) ||
+                        !int.TryParse(p[3], out int nx) || !int.TryParse(p[4], out int ny)) return;
+                    Unidad unidad = Motor.MoverUnidadRival(ox, oy, nx, ny);
+                    if (unidad != null)
                         GestorArchivos.RegistrarAccion(JugadorEnemigo.Nombre, "Red",
-                            $"Rival conectado: {p[1]}");
-                        break;
+                            $"Rival movió {unidad.Tipo} a ({nx},{ny}).");
+                    break;
+                }
 
-                    case "MOVER":
-                    {
-                        if (!int.TryParse(p[1], out int ox) || !int.TryParse(p[2], out int oy) ||
-                            !int.TryParse(p[3], out int nx) || !int.TryParse(p[4], out int ny)) return;
-                        Unidad unidad = JugadorEnemigo.Unidades.FirstOrDefault(
-                            u => u.PosicionX == ox && u.PosicionY == oy);
-                        if (unidad != null && unidad.EstaViva &&
-                            Tablero.EsCoordenadaValida(nx, ny) &&
-                            Tablero.EsCasillaLibre(nx, ny, JugadorLocal, JugadorEnemigo))
-                        {
-                            unidad.MoverA(nx, ny);
-                            GestorArchivos.RegistrarAccion(JugadorEnemigo.Nombre, "Red",
-                                $"Rival movió {unidad.Tipo} a ({nx},{ny}).");
-                        }
-                        break;
-                    }
-
-                    case "ATACAR":
-                    {
-                        if (!int.TryParse(p[1], out int ax) || !int.TryParse(p[2], out int ay) ||
-                            !int.TryParse(p[3], out int bx) || !int.TryParse(p[4], out int by) ||
-                            !int.TryParse(p[5], out int dano)) return;
-                        Unidad atacante = JugadorEnemigo.Unidades.FirstOrDefault(
-                            u => u.PosicionX == ax && u.PosicionY == ay);
-                        Unidad objetivo = JugadorLocal.Unidades.FirstOrDefault(
-                            u => u.PosicionX == bx && u.PosicionY == by);
-                        if (atacante == null || objetivo == null || !objetivo.EstaViva) return;
-                        objetivo.RecibirGolpe(dano); // daño plano (ya calculado en el otro lado)
+                case "ATACAR":
+                {
+                    if (!int.TryParse(p[1], out int ax) || !int.TryParse(p[2], out int ay) ||
+                        !int.TryParse(p[3], out int bx) || !int.TryParse(p[4], out int by) ||
+                        !int.TryParse(p[5], out int dano)) return;
+                    Unidad objetivo = Motor.AplicarAtaqueEnUnidadLocal(ax, ay, bx, by, dano);
+                    if (objetivo != null)
                         GestorArchivos.RegistrarAccion(JugadorEnemigo.Nombre, "Red",
                             $"Rival atacó a {objetivo.Tipo} ({dano} de daño).");
-                        if (!objetivo.EstaViva)
-                        {
-                            JugadorLocal.EliminarUnidad(objetivo);
-                            VerificarGanador();
-                        }
-                        break;
-                    }
+                    break;
+                }
 
-                    case "CONSTRUIR":
-                    {
-                        if (!int.TryParse(p[2], out int bx) || !int.TryParse(p[3], out int by)) return;
-                        if (!Tablero.EsCoordenadaValida(bx, by)) return;
-                        if (Tablero.CasillaTieneRecurso(bx, by)) return;
-                        if (!Tablero.EsCasillaLibre(bx, by, JugadorLocal, JugadorEnemigo)) return;
-                        TipoEdificio tipo = DatosDelJuego.ObtenerTipoEdificio(p[1]);
-                        Edificio espejo = DatosDelJuego.CrearEdificio(tipo, bx, by);
-                        JugadorEnemigo.AgregarEdificio(espejo);
-                        _ = ConstruccionTaskAsync(espejo,
-                            DatosDelJuego.EdificiosBase[tipo].TiempoConstruccionSegundos,
-                            JugadorEnemigo.Nombre);
+                case "CONSTRUIR":
+                {
+                    if (!int.TryParse(p[2], out int bx) || !int.TryParse(p[3], out int by)) return;
+                    TipoEdificio tipo = DatosDelJuego.ObtenerTipoEdificio(p[1]);
+                    if (Motor.CrearEdificioRival(tipo, bx, by))
                         GestorArchivos.RegistrarAccion(JugadorEnemigo.Nombre, "Red",
                             $"Rival construyó {tipo} en ({bx},{by}).");
-                        break;
-                    }
+                    break;
+                }
 
-                    case "ENTRENAR":
-                    {
-                        if (!Enum.TryParse(p[1], true, out TipoUnidad tipo) ||
-                            !int.TryParse(p[2], out int ux) || !int.TryParse(p[3], out int uy)) return;
-                        if (!Tablero.EsCoordenadaValida(ux, uy)) return;
-                        if (!Tablero.EsCasillaLibre(ux, uy, JugadorLocal, JugadorEnemigo)) return;
-                        JugadorEnemigo.AgregarUnidad(DatosDelJuego.CrearUnidad(tipo, ux, uy));
+                case "ENTRENAR":
+                {
+                    if (!Enum.TryParse(p[1], true, out TipoUnidad tipo) ||
+                        !int.TryParse(p[2], out int ux) || !int.TryParse(p[3], out int uy)) return;
+                    if (Motor.CrearUnidadRival(tipo, ux, uy))
                         GestorArchivos.RegistrarAccion(JugadorEnemigo.Nombre, "Red",
                             $"Rival entrenó {tipo} en ({ux},{uy}).");
-                        break;
-                    }
+                    break;
+                }
 
-                    case "RECOLECTAR":
-                    {
-                        // RECOLECTAR;x;y;1|0  → el rival encendió/apagó la recolección de su aldeano.
-                        if (!int.TryParse(p[1], out int rx) || !int.TryParse(p[2], out int ry) ||
-                            !int.TryParse(p[3], out int flag)) return;
-                        Unidad enemigo = JugadorEnemigo.Unidades.FirstOrDefault(
-                            u => u.PosicionX == rx && u.PosicionY == ry);
-                        // Solo reflejamos el estado visual: NO se lanza otro bucle (eso ya pasa en el lado del rival).
-                        if (enemigo == null || !enemigo.EstaViva || !enemigo.EsRecolector) return;
-                        enemigo.Estado = flag == 1 ? EstadoUnidad.Recolectando : EstadoUnidad.Idle;
+                case "RECOLECTAR":
+                {
+                    // RECOLECTAR;x;y;1|0  → el rival encendió/apagó la recolección de su aldeano.
+                    if (!int.TryParse(p[1], out int rx) || !int.TryParse(p[2], out int ry) ||
+                        !int.TryParse(p[3], out int flag)) return;
+                    if (Motor.CambiarEstadoRecoleccionRival(rx, ry, flag == 1))
                         GestorArchivos.RegistrarAccion(JugadorEnemigo.Nombre, "Red",
                             $"Rival {(flag == 1 ? "empezó a recolectar" : "detuvo la recolección")} en ({rx},{ry}).");
-                        break;
-                    }
+                    break;
+                }
 
-                    case "ATACAR_EDIFICIO":
-                    {
-                        // ATACAR_EDIFICIO;xAtacante;yAtacante;xEdificio;yEdificio;ataque
-                        if (!int.TryParse(p[1], out int ax) || !int.TryParse(p[2], out int ay) ||
-                            !int.TryParse(p[3], out int bx) || !int.TryParse(p[4], out int by) ||
-                            !int.TryParse(p[5], out int ataque)) return;
-                        Unidad atacante = JugadorEnemigo.Unidades.FirstOrDefault(
-                            u => u.PosicionX == ax && u.PosicionY == ay);
-                        Edificio objetivo = JugadorLocal.Edificios.FirstOrDefault(
-                            e => e.PosicionX == bx && e.PosicionY == by);
-                        if (atacante == null || objetivo == null || !objetivo.EstaViva) return;
-                        objetivo.RecibirDano(ataque); // misma fórmula de daño que en el lado del rival
+                case "ATACAR_EDIFICIO":
+                {
+                    // ATACAR_EDIFICIO;xAtacante;yAtacante;xEdificio;yEdificio;ataque
+                    if (!int.TryParse(p[1], out int ax) || !int.TryParse(p[2], out int ay) ||
+                        !int.TryParse(p[3], out int bx) || !int.TryParse(p[4], out int by) ||
+                        !int.TryParse(p[5], out int ataque)) return;
+                    Edificio objetivo = Motor.AplicarAtaqueEnEdificioLocal(ax, ay, bx, by, ataque);
+                    if (objetivo != null)
                         GestorArchivos.RegistrarAccion(JugadorEnemigo.Nombre, "Red",
                             $"Rival atacó {objetivo.Tipo} ({ataque} de ataque).");
-                        if (!objetivo.EstaViva)
-                        {
-                            JugadorLocal.EliminarEdificio(objetivo);
-                            VerificarGanador();
-                        }
-                        break;
-                    }
+                    break;
+                }
 
-                    case "ITEM":
-                    {
-                        // ITEM;Tipo;x;y → el host sembró un item; el espejo lo coloca igual.
-                        if (!Enum.TryParse(p[1], true, out TipoItem tipo) ||
-                            !int.TryParse(p[2], out int ix) || !int.TryParse(p[3], out int iy)) return;
-                        ColocarItem(tipo, ix, iy, enviarPorRed: false);
+                case "ITEM":
+                {
+                    // ITEM;Tipo;x;y → el host sembró un item; el espejo lo coloca igual.
+                    if (!Enum.TryParse(p[1], true, out TipoItem tipo) ||
+                        !int.TryParse(p[2], out int ix) || !int.TryParse(p[3], out int iy)) return;
+                    if (Motor.ColocarItemRival(tipo, ix, iy))
                         GestorArchivos.RegistrarAccion(JugadorEnemigo.Nombre, "Red",
                             $"Apareció {DatosDelJuego.NombreDe(tipo)} en ({ix},{iy}).");
-                        break;
-                    }
+                    break;
+                }
 
-                    case "RECOGER_ITEM":
-                    {
-                        // RECOGER_ITEM;Tipo;x;y → el rival tomó un item: yo dejo de
-                        // verlo en mi copia y replico los efectos compartidos (Casco).
-                        if (!Enum.TryParse(p[1], true, out TipoItem tipo) ||
-                            !int.TryParse(p[2], out int ix) || !int.TryParse(p[3], out int iy)) return;
-                        Item item = _itemsGlobales.FirstOrDefault(i => i.PosicionX == ix && i.PosicionY == iy);
-                        if (item == null) return;         // (idempotencia) ya lo había quitado
-                        item.Recogido = true;
-                        _itemsGlobales.Remove(item);
-                        AplicarEfectoItemEspejo(item);
+                case "RECOGER_ITEM":
+                {
+                    // RECOGER_ITEM;Tipo;x;y → el rival tomó un item: yo dejo de
+                    // verlo en mi copia y replico los efectos compartidos (Casco).
+                    if (!Enum.TryParse(p[1], true, out TipoItem tipo) ||
+                        !int.TryParse(p[2], out int ix) || !int.TryParse(p[3], out int iy)) return;
+                    if (Motor.AplicarRecogidaRival(tipo, ix, iy))
                         GestorArchivos.RegistrarAccion(JugadorEnemigo.Nombre, "Red",
                             $"Rival recogió {DatosDelJuego.NombreDe(tipo)} en ({ix},{iy}).");
-                        break;
-                    }
+                    break;
                 }
             }
         }
-
-        // ============ RELOJ DEL JUEGO (RTS en TIEMPO REAL, sin turnos) ============
-
-        // [Concurrencia] Bucle de fondo: espera 1 segundo real y suma 1 al marcador
-        // de la partida. Cada instancia (host y cliente) corre SU propio reloj, igual
-        // que corre su propia simulación; la red solo intercambia las acciones.
-        private async Task IniciarRelojAsync()
-        {
-            while (!_ctsReloj.IsCancellationRequested)
-            {
-                try { await Task.Delay(RelojTickMs, _ctsReloj.Token); }
-                catch (TaskCanceledException) { break; } // Cancelado (fin de partida/aplicación).
-
-                lock (_lockJuego)
-                {
-                    if (EstadoPartida.EnEjecucion)
-                        EstadoPartida.TiempoJuegoSegundos++;
-                }
-            }
-        }
-
-        // ============ ITEMS (objetos del mapa, generados por concurrencia) ============
-
-        // [Concurrencia] SPAWNER DE ITEMS: solo el host corre este Task. Cada
-        // IntervaloSpawnerMs siembra un item en una casilla libre y lo anuncia por
-        // red (ITEM;...) para que el espejo del cliente vea lo mismo. El mapa
-        // cambia SOLO, sin que nadie lo ordene.
-        private async Task IniciarSpawnerItemsAsync()
-        {
-            while (!_ctsSpawner.IsCancellationRequested)
-            {
-                try { await Task.Delay(IntervaloSpawnerMs, _ctsSpawner.Token); }
-                catch (TaskCanceledException) { break; } // Cancelado (fin de partida/aplicación).
-
-                lock (_lockJuego)
-                {
-                    if (!EstadoPartida.EnEjecucion) continue;
-                    (int X, int Y)? casilla = ElegirCasillaLibreParaItem();
-                    if (!casilla.HasValue) continue; // sin hueco, se espera al próximo latido
-                    TipoItem tipo = (TipoItem)_rng.Next(0, 4); // uno de los 4 al azar
-                    ColocarItem(tipo, casilla.Value.X, casilla.Value.Y, enviarPorRed: true);
-                }
-            }
-        }
-
-        // Busca 80 casillas al azar hasta encontrar una libre (sin unidad, edificio,
-        // yacimiento ni otro item). Devuelve null si el mapa está lleno.
-        private (int X, int Y)? ElegirCasillaLibreParaItem()
-        {
-            for (int intentos = 0; intentos < 80; intentos++)
-            {
-                int x = _rng.Next(0, Mapa.Ancho);
-                int y = _rng.Next(0, Mapa.Alto);
-                if (Tablero.EsCasillaLibre(x, y, JugadorLocal, JugadorEnemigo) &&
-                    !Tablero.CasillaTieneRecurso(x, y) &&
-                    !_itemsGlobales.Any(i => i.PosicionX == x && i.PosicionY == y))
-                    return (x, y);
-            }
-            return null;
-        }
-
-        // Pone un item en este mundo (host: lo siembra su spawner; la red: el espejo).
-        public bool ColocarItem(TipoItem tipo, int x, int y, bool enviarPorRed)
-        {
-            lock (_lockJuego)
-            {
-                if (!EstadoPartida.EnEjecucion) return false;
-                if (!Tablero.EsCoordenadaValida(x, y)) return false;
-                if (!Tablero.EsCasillaLibre(x, y, JugadorLocal, JugadorEnemigo)) return false;
-                if (Tablero.CasillaTieneRecurso(x, y)) return false;
-                if (_itemsGlobales.Any(i => i.PosicionX == x && i.PosicionY == y)) return false;
-
-                _itemsGlobales.Add(new Item(tipo, x, y));
-                if (enviarPorRed) EnviarPorRed($"ITEM;{tipo};{x};{y}");
-                return true;
-            }
-        }
-
-        // Una unidad adyacente al item lo recoge. Solo se aplica el efecto en la
-        // máquina del dueño; el rival solo refleja (elimina su copia + Casco espejo).
-        public bool RecogerItem(Unidad unidad, Item item)
-        {
-            lock (_lockJuego)
-            {
-                if (unidad == null || item == null || !EstadoPartida.EnEjecucion) return false;
-                if (item.Recogido || !_itemsGlobales.Contains(item)) return false; // (idempotencia)
-
-                int dx = Math.Abs(unidad.PosicionX - item.PosicionX);
-                int dy = Math.Abs(unidad.PosicionY - item.PosicionY);
-                if (dx > 1 || dy > 1) return false; // hay que estar adyacente, como el yacimiento
-
-                item.Recogido = true;
-                _itemsGlobales.Remove(item);
-
-                Jugador dueno = JugadorLocal.Unidades.Contains(unidad) ? JugadorLocal : JugadorEnemigo;
-                AplicarEfectoItem(item, unidad, dueno);
-
-                EnviarPorRed($"RECOGER_ITEM;{item.Tipo};{item.PosicionX};{item.PosicionY}");
-
-                GestorArchivos.RegistrarAccion(dueno.Nombre, "Item",
-                    $"{unidad.Tipo} recogió {DatosDelJuego.NombreDe(item.Tipo)} en ({item.PosicionX},{item.PosicionY}).");
-                return true;
-            }
-        }
-
-        // Efecto REAL del item para el dueño (corre dentro de lock(_lockJuego)).
-        private void AplicarEfectoItem(Item item, Unidad unidad, Jugador dueno)
-        {
-            switch (item.Tipo)
-            {
-                case TipoItem.Yogur:          // consumible: cura a todas las tropas griegas (por ahora todas)
-                    foreach (Unidad u in dueno.Unidades)
-                        if (u.EstaViva) u.Curarse(DatosDelJuego.CuraYogur);
-                    break;
-
-                case TipoItem.Casco:          // temporal: +defensa; otro Task lo quita a los X s
-                    dueno.DefensaBonus += DatosDelJuego.BonoDefensaCasco;
-                    _ = ExpiracionCascoAsync(dueno.Nombre);
-                    break;
-
-                case TipoItem.Espada:         // equipable: la lleva esa unidad (AtaqueTotal lo suma)
-                    unidad.Equipado = item;
-                    break;
-
-                case TipoItem.Herramientas:   // pasivo: +5% de recolección para siempre
-                    dueno.BonusRecoleccion += DatosDelJuego.BonusRecoleccionHerramientas;
-                    break;
-            }
-            dueno.ItemsRecogidos++;
-        }
-
-        // Espejo del rival: solo replica lo que afecta CÁLCULOS COMPARTIDOS (la
-        // defensa del Casco, que el atacante usa al calcular daño). El yogur, la
-        // espada y las herramientas son efectos locales del dueño.
-        private void AplicarEfectoItemEspejo(Item item)
-        {
-            if (item.Tipo == TipoItem.Casco)
-            {
-                JugadorEnemigo.DefensaBonus += DatosDelJuego.BonoDefensaCasco;
-                _ = ExpiracionCascoAsync(JugadorEnemigo.Nombre);
-            }
-        }
-
-        // [Concurrencia] El Casco es TEMPORAL: este Task lo apaga a los X segundos.
-        private async Task ExpiracionCascoAsync(string nombreJugador)
-        {
-            await Task.Delay(DuracionCascoSegundos * 1000);
-            lock (_lockJuego)
-            {
-                Jugador jug = JugadorLocal.Nombre == nombreJugador ? JugadorLocal : JugadorEnemigo;
-                if (jug != null) jug.DefensaBonus = Math.Max(0, jug.DefensaBonus - DatosDelJuego.BonoDefensaCasco);
-            }
-            GestorArchivos.RegistrarAccion(nombreJugador, "Item", "El Casco dejó de hacer efecto (defensa normal).");
-        }
-
-        // ============ AYUDANTES ============
-
-        private bool EstanAdyacentes(Unidad unidad, Recurso recurso)
-        {
-            int dx = Math.Abs(unidad.PosicionX - recurso.PosicionX);
-            int dy = Math.Abs(unidad.PosicionY - recurso.PosicionY);
-            return dx <= 1 && dy <= 1;
-        }
-
-        // Busca la casilla libre más cercana a un edificio (de ahí "sale" la unidad entrenada).
-        private (int X, int Y) ObtenerPosicionDeSalida(Edificio edificio)
-        {
-            for (int radio = 1; radio < Mapa.Ancho; radio++)
-            {
-                for (int dx = -radio; dx <= radio; dx++)
-                {
-                    for (int dy = -radio; dy <= radio; dy++)
-                    {
-                        int x = edificio.PosicionX + dx;
-                        int y = edificio.PosicionY + dy;
-                        if (Tablero.EsCasillaLibre(x, y, JugadorLocal, JugadorEnemigo))
-                            return (x, y);
-                    }
-                }
-            }
-            return (edificio.PosicionX, edificio.PosicionY);
-        }
-
-        // Métodos virtuales: las pruebas pueden sobrescribirlos para no esperar el tiempo real.
-        protected virtual Task EsperarEntrenamiento(int segundos, CancellationToken token)
-        {
-            return Task.Delay(segundos * 1000, token);
-        }
-
-        protected virtual Task EsperarConstruccion(int segundos)
-        {
-            return Task.Delay(segundos * 1000);
-        }
-
-        protected virtual int CicloRecoleccionMs => 1000;
-
-        // [Concurrencia] Cada cuántos ms late el reloj. 1000 = 1 segundo real.
-        // Las pruebas pueden bajarlo para ver el tiempo avanzar sin esperar.
-        protected virtual int RelojTickMs => 1000;
-
-        // [Concurrencia] Cada cuántos ms siembra el spawner un item (host).
-        protected virtual int IntervaloSpawnerMs => 3000;
-
-        // Cuántos SEGUNDOS dura el Casco antes de que su Task lo apague.
-        protected virtual int DuracionCascoSegundos => 10;
     }
 }
