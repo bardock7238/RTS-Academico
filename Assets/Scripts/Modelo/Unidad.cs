@@ -24,6 +24,19 @@ namespace Modelo
         // el Controlador al recogerlo y suma ataque a partir de ese momento.
         public Item Equipado { get; set; }
 
+        // [Concurrencia/Batalla] Si es true, el bucle de simulación del Modelo
+        // mueve y hace pelear a esta unidad SOLA, sin que nadie se lo ordene.
+        // Las unidades del jugador quedan en false (las controla la persona).
+        public bool ControladaPorIA { get; set; }
+
+        // [Concurrencia/Batalla] Objetivo actual que persigue la IA (el rival más
+        // cercano). null = sin objetivo todavía.
+        public Unidad Objetivo { get; set; }
+
+        // [Concurrencia/Batalla] Enfriamiento de ataque: ticks que faltan para
+        // poder volver a golpear. Evita que todos peguen en cada latido.
+        public int TiempoEsperaAtaque { get; set; }
+
         public Unidad()
         {
             Estado = EstadoUnidad.Idle;

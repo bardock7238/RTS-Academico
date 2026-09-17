@@ -60,6 +60,10 @@ namespace Modelo
         // suma 1 segundo por cada segundo real. Se cancela con este token.
         private readonly CancellationTokenSource _ctsReloj = new CancellationTokenSource();
 
+        // [Concurrencia] Bucle de simulación (la "batalla"): el Task de fondo que
+        // avanza a TODAS las unidades controladas por IA en cada latido.
+        private readonly CancellationTokenSource _ctsSimulacion = new CancellationTokenSource();
+
         // == CONFIGURACIÓN (el Controlador/tests la ajusta; el Modelo la usa) ==
         // Cada cuántos ms late un ciclo de recolección (1000 = 1 segundo real).
         public int CicloRecoleccionMs { get; set; } = 1000;
@@ -69,6 +73,25 @@ namespace Modelo
         public int IntervaloSpawnerMs { get; set; } = 3000;
         // Cuántos SEGUNDOS dura el Casco antes de que su Task lo apague.
         public int DuracionCascoSegundos { get; set; } = 10;
+
+        // == CONFIGURACIÓN DE LA BATALLA (concurrencia masiva — NIVEL 1) ==
+        // Cada cuántos ms late el bucle de simulación (100 = 10 latidos por segundo).
+        public int TickSimulacionMs { get; set; } = 100;
+        // Cuántos latidos debe esperar una unidad antes de volver a atacar.
+        public int TicksEntreAtaques { get; set; } = 5;
+
+        // == ESTADO DE LA BATALLA (lo lee la Vista/el informe) ==
+        // Lo enciende IniciarBatalla(); mientras esté en true el bucle trabaja.
+        public volatile bool BucleActivo;
+        public int TicksSimulados { get; private set; }
+        public int BajasLocal { get; private set; }
+        public int BajasEnemigo { get; private set; }
+
+        // Cuántas unidades siguen vivas en total (para el HUD de la demo).
+        public int UnidadesEnBatalla
+        {
+            get { lock (Candado) return JugadorLocal.Unidades.Count + JugadorEnemigo.Unidades.Count; }
+        }
         // Delegados de espera: permiten acelerar el tiempo en pruebas (DemoRapida).
         public Func<int, CancellationToken, Task> EsperarEntrenamiento { get; set; } =
             (segundos, token) => Task.Delay(segundos * 1000, token);
@@ -91,6 +114,10 @@ namespace Modelo
             // [Concurrencia] RTS en tiempo real: desde el arranque, un Task de fondo
             // marca los segundos de partida mientras esta siga en ejecución.
             _ = IniciarRelojAsync();
+
+            // [Concurrencia] Bucle de simulación (combate masivo). Late desde el
+            // arranque pero NO hace nada hasta que IniciarBatalla() encienda BucleActivo.
+            _ = IniciarBucleSimulacionAsync();
 
             // [Concurrencia] El host SIEMBRA items solos en el mapa; su Task anuncia
             // cada colocación por red para que el espejo del cliente vea lo mismo.
@@ -118,6 +145,48 @@ namespace Modelo
                 $"Centro local ({centroLocal.PosicionX},{centroLocal.PosicionY}) | " +
                 $"Centro enemigo ({centroEnemigo.PosicionX},{centroEnemigo.PosicionY})");
             GestorArchivos.RegistrarAccion(nombreJugador, "Inicio", "Partida inicializada.");
+        }
+
+        // ============ API PARA LA VISTA (Unity) ============
+
+        // [Concurrencia] FOTO segura del mundo para dibujar. Copia las listas bajo el
+        // candado, así la Vista itera sus propias copias sin chocar con los Tasks.
+        // La Vista debe llamar esto UNA vez por frame y pintar desde el resultado.
+        public InstantaneaJuego Instantanea()
+        {
+            lock (Candado)
+            {
+                return new InstantaneaJuego(
+                    new List<Unidad>(JugadorLocal.Unidades),
+                    new List<Unidad>(JugadorEnemigo.Unidades),
+                    new List<Edificio>(JugadorLocal.Edificios),
+                    new List<Edificio>(JugadorEnemigo.Edificios),
+                    new List<Recurso>(Tablero.RecursosEnMapa),
+                    new List<Item>(_itemsGlobales),
+                    JugadorLocal.Oro, JugadorLocal.Madera, JugadorLocal.Comida,
+                    EstadoPartida.TiempoJuegoSegundos,
+                    EstadoPartida.EnEjecucion,
+                    EstadoPartida.GanadorNombre);
+            }
+        }
+
+        // [Concurrencia] APAGA el motor: cancela el reloj, el spawner y todos los
+        // trabajos en curso (entrenamientos y recolecciones). La Vista/Unity debe
+        // llamar esto al salir de la escena o del modo Play, para no dejar Tasks
+        // corriendo por detrás ("partida fantasma"). Es seguro llamarlo varias veces.
+        public void Detener()
+        {
+            _ctsReloj.Cancel();
+            _ctsSpawner.Cancel();
+            _ctsSimulacion.Cancel();
+
+            lock (Candado)
+            {
+                foreach (CancellationTokenSource cts in _entrenamientosActivos.Values) cts.Cancel();
+                foreach (CancellationTokenSource cts in _recolectoresActivos.Values) cts.Cancel();
+                _entrenamientosActivos.Clear();
+                _recolectoresActivos.Clear();
+            }
         }
 
         // ============ ACCIONES DEL JUGADOR (todas con lock(Candado) interno) ============
@@ -609,6 +678,206 @@ namespace Modelo
                         EstadoPartida.TiempoJuegoSegundos++;
                 }
             }
+        }
+
+        // ============ BATALLA MASIVA (concurrencia — NIVEL 1) ============
+        // Un solo Task de fondo (el "bucle de simulación") late cada TickSimulacionMs
+        // y avanza TODAS las unidades de IA dentro del candado del mundo. La
+        // concurrencia es real (corre a la vez que el jugador, la red y la Vista),
+        // pero el trabajo del latido ocurre en un único hilo → sin carreras.
+
+        // [Concurrencia/Demo] Enciende el "modo batalla": siembra N unidades por lado
+        // controladas por la IA y activa el bucle. Sirve para que la concurrencia SE
+        // VEA en pantalla (cientos de unidades avanzando y combatiendo solas).
+        // Devuelve cuántas unidades se pudieron colocar por lado.
+        public int IniciarBatalla(int porLado)
+        {
+            lock (Candado)
+            {
+                if (!EstadoPartida.EnEjecucion) return 0;
+
+                int creadas = 0;
+                for (int i = 0; i < porLado; i++)
+                {
+                    Unidad local = ColocarUnidadDeBatalla(JugadorLocal, i, ladoLocal: true);
+                    Unidad rival = ColocarUnidadDeBatalla(JugadorEnemigo, i, ladoLocal: false);
+                    if (local == null || rival == null)
+                    {
+                        // Sin hueco: deshacemos el par para no dejar ventaja a nadie.
+                        if (local != null) JugadorLocal.EliminarUnidad(local);
+                        if (rival != null) JugadorEnemigo.EliminarUnidad(rival);
+                        break;
+                    }
+                    creadas++;
+                }
+
+                BucleActivo = creadas > 0;
+                GestorArchivos.RegistrarAccion(JugadorLocal.Nombre, "Batalla",
+                    $"Modo batalla: {creadas} unidades por lado. Concurrencia NIVEL 1 (bucle + candado).");
+                return creadas;
+            }
+        }
+
+        // Apaga el modo batalla (deja de latir, las unidades se quedan quietas).
+        public void DetenerBatalla() => BucleActivo = false;
+
+        private Unidad ColocarUnidadDeBatalla(Jugador dueno, int indice, bool ladoLocal)
+        {
+            // Cada jugador recibe su mitad del mapa: el host arriba, el cliente abajo.
+            bool enMitadArriba = ladoLocal ? _esHost : !_esHost;
+            int yInicio = enMitadArriba ? 0 : Mapa.Alto - 1;
+            int pasoY = enMitadArriba ? 1 : -1;
+
+            for (int fila = 0; fila < Mapa.Alto / 2; fila++)
+            {
+                int y = yInicio + pasoY * fila;
+                for (int col = 0; col < Mapa.Ancho; col++)
+                {
+                    int x = (indice + col + fila) % Mapa.Ancho; // desfase para repartir
+                    if (Tablero.CasillaTieneRecurso(x, y)) continue;
+                    if (!Tablero.EsCasillaLibre(x, y, JugadorLocal, JugadorEnemigo)) continue;
+
+                    Unidad u = DatosDelJuego.CrearUnidad(TipoUnidad.Soldado, x, y);
+                    u.ControladaPorIA = true;
+                    dueno.AgregarUnidad(u);
+                    return u;
+                }
+            }
+            return null;
+        }
+
+        // [Concurrencia] Bucle de fondo de la batalla. Late siempre, pero solo
+        // trabaja si IniciarBatalla() encendió BucleActivo y la partida sigue viva.
+        private async Task IniciarBucleSimulacionAsync()
+        {
+            while (!_ctsSimulacion.IsCancellationRequested)
+            {
+                try { await Task.Delay(TickSimulacionMs, _ctsSimulacion.Token); }
+                catch (TaskCanceledException) { break; } // Cancelado (fin de partida/aplicación).
+
+                if (!BucleActivo) continue;
+
+                bool enEjecucion;
+                lock (Candado) { enEjecucion = EstadoPartida.EnEjecucion; }
+                if (!enEjecucion) { BucleActivo = false; break; }
+
+                ResolverTick();
+                TicksSimulados++;
+            }
+        }
+
+        // Un latido del mundo: avanzar TODAS las unidades de IA y aplicar los golpes.
+        private void ResolverTick()
+        {
+            var pendientes = new List<(Unidad victima, int dano)>();
+
+            lock (Candado)
+            {
+                foreach (Unidad u in JugadorLocal.Unidades)
+                    ProcesarUnidadTactica(u, JugadorEnemigo, JugadorLocal, pendientes);
+                foreach (Unidad u in JugadorEnemigo.Unidades)
+                    ProcesarUnidadTactica(u, JugadorLocal, JugadorEnemigo, pendientes);
+
+                AplicarPendientes(pendientes);
+            }
+        }
+
+        // Decide lo que hace UNA unidad este latido: buscar rival, acercarse o pegar.
+        // Corre dentro del candado (Nivel 1), así que no hay condiciones de carrera.
+        private void ProcesarUnidadTactica(
+            Unidad u, Jugador rival, Jugador dueno,
+            List<(Unidad victima, int dano)> pendientes)
+        {
+            if (u == null || !u.EstaViva || !u.ControladaPorIA || !u.PuedeAtacar) return;
+
+            if (u.TiempoEsperaAtaque > 0) u.TiempoEsperaAtaque--;
+
+            Unidad objetivo = EnemigoMasCercano(u, rival);
+            if (objetivo == null) { u.Objetivo = null; return; }
+            u.Objetivo = objetivo;
+
+            if (Distancia(u, objetivo) <= u.RangoAtaque)
+            {
+                u.Estado = EstadoUnidad.Atacando;
+                if (u.TiempoEsperaAtaque == 0)
+                {
+                    pendientes.Add((objetivo, CalcularDano(u, objetivo, rival)));
+                    u.TiempoEsperaAtaque = TicksEntreAtaques;
+                }
+                return;
+            }
+
+            // Fuera de rango: se acerca una casilla (el daño se aplicará al final
+            // del latido, para no mutar la vida de una lista mientras se recorre).
+            u.Estado = EstadoUnidad.Moviendo;
+            IntentarPaso(u, objetivo);
+        }
+
+        private Unidad EnemigoMasCercano(Unidad u, Jugador rival)
+        {
+            Unidad mejor = null;
+            int mejorDist = int.MaxValue;
+            List<Unidad> lista = rival.Unidades;
+            for (int i = 0; i < lista.Count; i++) // índice, no enumerador (listas que cambian)
+            {
+                Unidad e = lista[i];
+                if (!e.EstaViva) continue;
+                int d = Distancia(u, e);
+                if (d < mejorDist) { mejorDist = d; mejor = e; }
+            }
+            return mejor;
+        }
+
+        private static int Distancia(Unidad a, Unidad b) =>
+            Math.Abs(a.PosicionX - b.PosicionX) + Math.Abs(a.PosicionY - b.PosicionY);
+
+        private static int CalcularDano(Unidad atacante, Unidad defensor, Jugador duenoDefensor) =>
+            Math.Max(0, atacante.AtaqueTotal - (defensor.Defensa + duenoDefensor.DefensaBonus));
+
+        // Da un paso de una casilla hacia el objetivo (primero el eje "más lejano").
+        private void IntentarPaso(Unidad u, Unidad objetivo)
+        {
+            int difX = objetivo.PosicionX - u.PosicionX;
+            int difY = objetivo.PosicionY - u.PosicionY;
+            int pasoX = Math.Sign(difX);
+            int pasoY = Math.Sign(difY);
+
+            if (Math.Abs(difX) >= Math.Abs(difY))
+            {
+                if (pasoX != 0 && Tablero.EsCasillaLibre(u.PosicionX + pasoX, u.PosicionY, JugadorLocal, JugadorEnemigo))
+                { u.MoverA(u.PosicionX + pasoX, u.PosicionY); return; }
+                if (pasoY != 0 && Tablero.EsCasillaLibre(u.PosicionX, u.PosicionY + pasoY, JugadorLocal, JugadorEnemigo))
+                { u.MoverA(u.PosicionX, u.PosicionY + pasoY); return; }
+            }
+            else
+            {
+                if (pasoY != 0 && Tablero.EsCasillaLibre(u.PosicionX, u.PosicionY + pasoY, JugadorLocal, JugadorEnemigo))
+                { u.MoverA(u.PosicionX, u.PosicionY + pasoY); return; }
+                if (pasoX != 0 && Tablero.EsCasillaLibre(u.PosicionX + pasoX, u.PosicionY, JugadorLocal, JugadorEnemigo))
+                { u.MoverA(u.PosicionX + pasoX, u.PosicionY); return; }
+            }
+        }
+
+        // Aplica TODOS los golpes del latido de una vez (así nadie muta la vida de
+        // una unidad mientras se recorre la lista) y retira a los muertos.
+        private void AplicarPendientes(List<(Unidad victima, int dano)> pendientes)
+        {
+            foreach ((Unidad victima, int dano) golpe in pendientes)
+            {
+                if (golpe.victima == null || !golpe.victima.EstaViva) continue; // murió antes en este mismo latido
+                golpe.victima.RecibirGolpe(golpe.dano);
+            }
+
+            int bajasLocal = JugadorLocal.Unidades.RemoveAll(u => !u.EstaViva);
+            int bajasEnemigo = JugadorEnemigo.Unidades.RemoveAll(u => !u.EstaViva);
+            BajasLocal += bajasLocal;
+            BajasEnemigo += bajasEnemigo;
+
+            if (bajasLocal > 0 || bajasEnemigo > 0)
+                GestorArchivos.RegistrarAccion(JugadorLocal.Nombre, "Batalla",
+                    $"Latido {TicksSimulados}: bajas local {bajasLocal}, enemigo {bajasEnemigo}.");
+
+            VerificarGanador();
         }
 
         // ============ ESPEJO DE LA RED (el motor refleja la copia del rival) ============

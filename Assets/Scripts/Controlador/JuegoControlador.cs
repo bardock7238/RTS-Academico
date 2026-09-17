@@ -104,6 +104,32 @@ namespace Controlador
 
         public void VerificarGanador() => Motor.VerificarGanador();
 
+        // ============ MODO BATALLA (concurrencia masiva — Nivel 1) ============
+        // El motor (Modelo) late solo y hace pelear a las unidades de IA. La Vista
+        // solo enciende/apaga el modo y lee las métricas para el HUD.
+        public int IniciarBatalla(int unidadesPorLado) => Motor.IniciarBatalla(unidadesPorLado);
+        public void DetenerBatalla() => Motor.DetenerBatalla();
+
+        public bool BucleBatallaActivo => Motor.BucleActivo;
+        public int TicksSimulados => Motor.TicksSimulados;
+        public int BajasLocal => Motor.BajasLocal;
+        public int BajasEnemigo => Motor.BajasEnemigo;
+
+        // ============ API PARA LA VISTA (Unity) ============
+
+        // Foto segura del mundo para pintar. La Vista la llama UNA vez por frame y
+        // dibuja desde el resultado (evita leer listas que un Task está modificando).
+        public InstantaneaJuego Instantanea() => Motor.Instantanea();
+
+        // Apaga todo al salir de la escena o del modo Play: detiene el motor
+        // (reloj, spawner, entrenamientos, recolecciones) y cierra la conexión de red.
+        public void Detener()
+        {
+            Motor.Detener();
+            RedPartida?.Dispose();
+            RedPartida = null;
+        }
+
         // Items: el Modelo ejecuta la lógica; esta capa anuncia por red.
         public bool ColocarItem(TipoItem tipo, int x, int y, bool enviarPorRed)
         {
