@@ -48,11 +48,22 @@ namespace Modelo
         private readonly List<Item> _itemsGlobales = new List<Item>();
 
         // La Vista lee esto (vía hilo principal) para pintar los items en el mapa.
-        public List<Item> ItemsVisibles => _itemsGlobales;
+        public IReadOnlyList<Item> ItemsVisibles
+        {
+            get
+            {
+                lock (Candado)
+                {
+                    return new List<Item>(_itemsGlobales);
+                }
+            }
+        }
 
         // Trabajos en segundo plano activos: para poder cancelarlos.
         private readonly Dictionary<TipoUnidad, CancellationTokenSource> _entrenamientosActivos =
             new Dictionary<TipoUnidad, CancellationTokenSource>();
+        private readonly Dictionary<Edificio, CancellationTokenSource> _construccionesActivas =
+            new Dictionary<Edificio, CancellationTokenSource>();
         private readonly Dictionary<Unidad, CancellationTokenSource> _recolectoresActivos =
             new Dictionary<Unidad, CancellationTokenSource>();
 
@@ -63,6 +74,8 @@ namespace Modelo
         // [Concurrencia] Bucle de simulación (la "batalla"): el Task de fondo que
         // avanza a TODAS las unidades controladas por IA en cada latido.
         private readonly CancellationTokenSource _ctsSimulacion = new CancellationTokenSource();
+        private readonly CancellationTokenSource _ctsEfectosTemporales = new CancellationTokenSource();
+        private volatile bool _detenido;
 
         // == CONFIGURACIÓN (el Controlador/tests la ajusta; el Modelo la usa) ==
         // Cada cuántos ms late un ciclo de recolección (1000 = 1 segundo real).
@@ -103,6 +116,20 @@ namespace Modelo
         // item, un aldeano dejó de recolectar solo...). El Controlador se suscribe.
         public event Action<string> ParaTransmitir;
 
+        // [Concurrencia] Toda tarea de fondo queda observada: sus excepciones no se
+        // pierden como tareas no observadas y el Modelo las deja registradas.
+        private void IniciarTarea(Task tarea, string nombre)
+        {
+            tarea.ContinueWith(
+                completada => GestorArchivos.RegistrarAccion(
+                    "Sistema",
+                    "Error de tarea",
+                    $"{nombre}: {completada.Exception?.GetBaseException().Message}"),
+                CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+        }
+
         public Simulacion(string nombreJugador, bool localArriba = true)
         {
             _esHost = localArriba;
@@ -113,16 +140,16 @@ namespace Modelo
 
             // [Concurrencia] RTS en tiempo real: desde el arranque, un Task de fondo
             // marca los segundos de partida mientras esta siga en ejecución.
-            _ = IniciarRelojAsync();
+            IniciarTarea(IniciarRelojAsync(), "Reloj");
 
             // [Concurrencia] Bucle de simulación (combate masivo). Late desde el
             // arranque pero NO hace nada hasta que IniciarBatalla() encienda BucleActivo.
-            _ = IniciarBucleSimulacionAsync();
+            IniciarTarea(IniciarBucleSimulacionAsync(), "Bucle de simulacion");
 
             // [Concurrencia] El host SIEMBRA items solos en el mapa; su Task anuncia
             // cada colocación por red para que el espejo del cliente vea lo mismo.
             if (_esHost)
-                _ = IniciarSpawnerItemsAsync();
+                IniciarTarea(IniciarSpawnerItemsAsync(), "Spawner de items");
 
             // Cada instancia coloca a SU jugador en su lado. El host (localArriba = true)
             // vive arriba; el cliente (localArriba = false) vive abajo. Así las copias
@@ -176,15 +203,20 @@ namespace Modelo
         // corriendo por detrás ("partida fantasma"). Es seguro llamarlo varias veces.
         public void Detener()
         {
+            _detenido = true;
             _ctsReloj.Cancel();
             _ctsSpawner.Cancel();
             _ctsSimulacion.Cancel();
+            _ctsEfectosTemporales.Cancel();
 
             lock (Candado)
             {
+                EstadoPartida.EnEjecucion = false;
                 foreach (CancellationTokenSource cts in _entrenamientosActivos.Values) cts.Cancel();
+                foreach (CancellationTokenSource cts in _construccionesActivas.Values) cts.Cancel();
                 foreach (CancellationTokenSource cts in _recolectoresActivos.Values) cts.Cancel();
                 _entrenamientosActivos.Clear();
+                _construccionesActivas.Clear();
                 _recolectoresActivos.Clear();
             }
         }
@@ -196,7 +228,9 @@ namespace Modelo
         {
             lock (Candado)
             {
+                if (_detenido) return false;
                 if (unidad == null) return false;
+                if (!JugadorLocal.Unidades.Contains(unidad)) return false;
                 if (!Tablero.EsCoordenadaValida(nuevoX, nuevoY)) return false;
                 if (!Tablero.EsCasillaLibre(nuevoX, nuevoY, JugadorLocal, JugadorEnemigo)) return false;
 
@@ -217,6 +251,7 @@ namespace Modelo
         {
             lock (Candado)
             {
+                if (_detenido || !EstadoPartida.EnEjecucion) return false;
                 if (!Tablero.EsCoordenadaValida(x, y)) return false;
                 if (Tablero.CasillaTieneRecurso(x, y)) return false;
                 if (!Tablero.EsCasillaLibre(x, y, JugadorLocal, JugadorEnemigo)) return false;
@@ -229,7 +264,13 @@ namespace Modelo
                 JugadorLocal.AgregarEdificio(nuevoEdificio);
 
                 // La obra avanza sola en segundo plano y completa el edificio.
-                _ = ConstruccionTaskAsync(nuevoEdificio, config.TiempoConstruccionSegundos, JugadorLocal.Nombre);
+                CancellationTokenSource cts = new CancellationTokenSource();
+                _construccionesActivas[nuevoEdificio] = cts;
+                IniciarTarea(ConstruccionTaskAsync(
+                    nuevoEdificio,
+                    config.TiempoConstruccionSegundos,
+                    JugadorLocal.Nombre,
+                    cts), "Construccion");
 
                 GestorArchivos.RegistrarAccion(
                     JugadorLocal.Nombre,
@@ -245,6 +286,7 @@ namespace Modelo
         {
             lock (Candado)
             {
+                if (_detenido || !EstadoPartida.EnEjecucion) return false;
                 Edificio edificio = JugadorLocal.Edificios.FirstOrDefault(e => e.Tipo == edificioOrigen);
                 if (edificio == null || !edificio.PuedeEntrenar(tipo)) return false;
                 if (_entrenamientosActivos.ContainsKey(tipo)) return false; // ya hay uno en curso
@@ -257,7 +299,7 @@ namespace Modelo
                 _entrenamientosActivos[tipo] = cts;
 
                 // Lanzamos la tarea y seguimos: no bloqueamos al usuario.
-                _ = EntrenamientoTaskAsync(tipo, config, cts.Token);
+                IniciarTarea(EntrenamientoTaskAsync(tipo, config, cts.Token), "Entrenamiento");
 
                 GestorArchivos.RegistrarAccion(
                     JugadorLocal.Nombre,
@@ -269,12 +311,30 @@ namespace Modelo
 
         // [Concurrencia] La obra avanza sola en segundo plano y completa el edificio;
         // la misma Task se usa para el espejo del edificio rival en la otra máquina.
-        private async Task ConstruccionTaskAsync(Edificio edificio, int segundos, string nombreDueno)
+        private async Task ConstruccionTaskAsync(
+            Edificio edificio,
+            int segundos,
+            string nombreDueno,
+            CancellationTokenSource cts)
         {
-            await EsperarConstruccion(segundos);
+            try
+            {
+                Task espera = EsperarConstruccion(segundos);
+                Task cancelacion = Task.Delay(Timeout.Infinite, cts.Token);
+                Task terminada = await Task.WhenAny(espera, cancelacion);
+                await terminada;
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
 
             lock (Candado)
             {
+                _construccionesActivas.Remove(edificio);
+                if (cts.IsCancellationRequested || !EstadoPartida.EnEjecucion)
+                    return;
+
                 edificio.CompletarConstruccion();
                 GestorArchivos.RegistrarAccion(
                     nombreDueno,
@@ -290,7 +350,7 @@ namespace Modelo
             {
                 await EsperarEntrenamiento(config.TiempoEntrenamientoSegundos, token);
             }
-            catch (TaskCanceledException)
+            catch (OperationCanceledException)
             {
                 completado = false;
             }
@@ -325,6 +385,7 @@ namespace Modelo
         {
             lock (Candado)
             {
+                if (_detenido || !EstadoPartida.EnEjecucion) return false;
                 if (aldeano == null || recurso == null) return false;
                 if (!aldeano.EsRecolector || !aldeano.EstaViva) return false;
                 if (recurso.EstaAgotado) return false;
@@ -336,7 +397,7 @@ namespace Modelo
                 CancellationTokenSource cts = new CancellationTokenSource();
                 _recolectoresActivos[aldeano] = cts;
 
-                _ = RecoleccionTaskAsync(aldeano, recurso, cts.Token);
+                IniciarTarea(RecoleccionTaskAsync(aldeano, recurso, cts.Token), "Recoleccion");
 
                 GestorArchivos.RegistrarAccion(
                     JugadorLocal.Nombre,
@@ -421,7 +482,10 @@ namespace Modelo
         {
             lock (Candado)
             {
+                if (_detenido || !EstadoPartida.EnEjecucion) return false;
                 if (atacante == null || enemigo == null) return false;
+                if (!JugadorLocal.Unidades.Contains(atacante) ||
+                    !JugadorEnemigo.Unidades.Contains(enemigo)) return false;
                 if (!atacante.PuedeAtacar || !enemigo.EstaViva) return false;
 
                 int distancia = Math.Abs(atacante.PosicionX - enemigo.PosicionX)
@@ -464,7 +528,9 @@ namespace Modelo
         {
             lock (Candado)
             {
+                if (_detenido || !EstadoPartida.EnEjecucion) return false;
                 if (atacante == null || edificioEnemigo == null) return false;
+                if (!JugadorLocal.Unidades.Contains(atacante)) return false;
                 if (!atacante.PuedeAtacar || !edificioEnemigo.EstaViva) return false;
                 if (!JugadorEnemigo.Edificios.Contains(edificioEnemigo)) return false;
 
@@ -574,7 +640,7 @@ namespace Modelo
         {
             lock (Candado)
             {
-                if (!EstadoPartida.EnEjecucion) return false;
+                if (_detenido || !EstadoPartida.EnEjecucion) return false;
                 if (!Tablero.EsCoordenadaValida(x, y)) return false;
                 if (!Tablero.EsCasillaLibre(x, y, JugadorLocal, JugadorEnemigo)) return false;
                 if (Tablero.CasillaTieneRecurso(x, y)) return false;
@@ -591,7 +657,8 @@ namespace Modelo
         {
             lock (Candado)
             {
-                if (unidad == null || item == null || !EstadoPartida.EnEjecucion) return false;
+                if (_detenido || unidad == null || item == null || !EstadoPartida.EnEjecucion) return false;
+                if (!JugadorLocal.Unidades.Contains(unidad)) return false;
                 if (item.Recogido || !_itemsGlobales.Contains(item)) return false; // (idempotencia)
 
                 int dx = Math.Abs(unidad.PosicionX - item.PosicionX);
@@ -622,7 +689,9 @@ namespace Modelo
 
                 case TipoItem.Casco:          // temporal: +defensa; otro Task lo quita a los X s
                     dueno.DefensaBonus += DatosDelJuego.BonoDefensaCasco;
-                    _ = ExpiracionCascoAsync(dueno.Nombre);
+                    IniciarTarea(
+                        ExpiracionCascoAsync(dueno.Nombre, _ctsEfectosTemporales.Token),
+                        "Expiracion de Casco");
                     break;
 
                 case TipoItem.Espada:         // equipable: la lleva esa unidad (AtaqueTotal lo suma)
@@ -644,16 +713,27 @@ namespace Modelo
             if (item.Tipo == TipoItem.Casco)
             {
                 JugadorEnemigo.DefensaBonus += DatosDelJuego.BonoDefensaCasco;
-                _ = ExpiracionCascoAsync(JugadorEnemigo.Nombre);
+                IniciarTarea(
+                    ExpiracionCascoAsync(JugadorEnemigo.Nombre, _ctsEfectosTemporales.Token),
+                    "Expiracion de Casco espejo");
             }
         }
 
         // [Concurrencia] El Casco es TEMPORAL: este Task lo apaga a los X segundos.
-        private async Task ExpiracionCascoAsync(string nombreJugador)
+        private async Task ExpiracionCascoAsync(string nombreJugador, CancellationToken token)
         {
-            await Task.Delay(DuracionCascoSegundos * 1000);
+            try
+            {
+                await Task.Delay(DuracionCascoSegundos * 1000, token);
+            }
+            catch (TaskCanceledException)
+            {
+                return;
+            }
+
             lock (Candado)
             {
+                if (token.IsCancellationRequested) return;
                 Jugador jug = JugadorLocal.Nombre == nombreJugador ? JugadorLocal : JugadorEnemigo;
                 if (jug != null) jug.DefensaBonus = Math.Max(0, jug.DefensaBonus - DatosDelJuego.BonoDefensaCasco);
             }
@@ -694,7 +774,7 @@ namespace Modelo
         {
             lock (Candado)
             {
-                if (!EstadoPartida.EnEjecucion) return 0;
+                if (_detenido || !EstadoPartida.EnEjecucion) return 0;
 
                 int creadas = 0;
                 for (int i = 0; i < porLado; i++)
@@ -955,9 +1035,12 @@ namespace Modelo
 
                 Edificio espejo = DatosDelJuego.CrearEdificio(tipo, x, y);
                 JugadorEnemigo.AgregarEdificio(espejo);
-                _ = ConstruccionTaskAsync(espejo,
+                CancellationTokenSource cts = new CancellationTokenSource();
+                _construccionesActivas[espejo] = cts;
+                IniciarTarea(ConstruccionTaskAsync(espejo,
                     DatosDelJuego.EdificiosBase[tipo].TiempoConstruccionSegundos,
-                    JugadorEnemigo.Nombre);
+                    JugadorEnemigo.Nombre,
+                    cts), "Construccion espejo");
                 return true;
             }
         }

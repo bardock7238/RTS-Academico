@@ -32,7 +32,7 @@ namespace Controlador
         public Jugador JugadorEnemigo => Motor.JugadorEnemigo;
         public Mapa Tablero => Motor.Tablero;
         public Partida EstadoPartida => Motor.EstadoPartida;
-        public List<Item> ItemsVisibles => Motor.ItemsVisibles;
+        public IReadOnlyList<Item> ItemsVisibles => Motor.ItemsVisibles;
 
         public ConectorRed RedPartida { get; private set; }
         public string NombreRivalRed { get; private set; }

@@ -22,7 +22,7 @@ namespace Modelo
         public bool EstaAgotado => Cantidad <= 0;
 
         // Retira hasta 'cantidadSolicitada' del recurso y devuelve lo extraído.
-        // El hilo de recolección del Controlador llamará a este método dentro de un lock.
+        // El Task de recolección del Modelo llama a este método dentro de un lock.
         public int Extraer(int cantidadSolicitada)
         {
             if (Cantidad <= 0 || cantidadSolicitada <= 0) return 0;
