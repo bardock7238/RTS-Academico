@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -27,7 +28,10 @@ namespace Modelo
     //    · Las acciones DEL JUGADOR local se aplican aquí y el Controlador las
     //      anuncia al rival; el rival las refleja con los métodos "Espejo" (XxxRival).
     //    · Solo lo que el motor decide SOLO necesita avisar por red (una unidad que
-    //      terminó de entrenar, un item que apareció): se usa el evento ParaTransmitir.
+    //      terminó de entrenar, un item que apareció): se ENCOLA en la cola de
+    //      salida y el Controlador la drena desde el hilo principal (ver
+    //      ProcesarMensajesRedPendientes). Encolar es no bloqueante: NUNCA se
+    //      escribe a un socket dentro de lock(Candado).
     // ============================================================================
     public class Simulacion
     {
@@ -35,6 +39,22 @@ namespace Modelo
         // unidades, edificios, recursos o items pasa por aquí. Los Tasks de fondo y
         // las acciones del jugador se serializan con este candado.
         public readonly object Candado = new object();
+
+        // [Concurrencia] COLA DE SALIDA: lo que el Modelo quiere anunciar por red.
+        // Los Tasks de fondo ENCOLAN aquí (no bloqueante); el Controlador drena en
+        // el hilo principal y hace el socket. Así una escritura TCP bloqueante nunca
+        // se ejecuta estando tomado el candado del mundo.
+        private readonly ConcurrentQueue<string> _salientes = new ConcurrentQueue<string>();
+
+        public bool HaySalientes => !_salientes.IsEmpty;
+
+        public string SiguienteSaliente()
+        {
+            if (_salientes.TryDequeue(out string mensaje)) return mensaje;
+            return null;
+        }
+
+        private void Transmitir(string mensaje) => _salientes.Enqueue(mensaje);
 
         public Jugador JugadorLocal { get; private set; }
         public Jugador JugadorEnemigo { get; private set; }
@@ -110,11 +130,6 @@ namespace Modelo
             (segundos, token) => Task.Delay(segundos * 1000, token);
         public Func<int, Task> EsperarConstruccion { get; set; } =
             segundos => Task.Delay(segundos * 1000);
-
-        // [Concurrencia] Aviso del Modelo hacia el Controlador: sucedió algo que el
-        // Controlador debe anunciar por red (terminó un entrenamiento, apareció un
-        // item, un aldeano dejó de recolectar solo...). El Controlador se suscribe.
-        public event Action<string> ParaTransmitir;
 
         // [Concurrencia] Toda tarea de fondo queda observada: sus excepciones no se
         // pierden como tareas no observadas y el Modelo las deja registradas.
@@ -370,7 +385,7 @@ namespace Modelo
                 }
 
                 JugadorLocal.AgregarUnidad(nueva);
-                ParaTransmitir?.Invoke($"ENTRENAR;{tipo};{nueva.PosicionX};{nueva.PosicionY}");
+                Transmitir($"ENTRENAR;{tipo};{nueva.PosicionX};{nueva.PosicionY}");
                 GestorArchivos.RegistrarAccion(
                     JugadorLocal.Nombre,
                     "Entrenar",
@@ -464,7 +479,12 @@ namespace Modelo
             // Si terminó solo (yacimiento vacío o aldeano muerto), avisa al rival para
             // que su copia también vuelva a Idle. Si lo detuvieron, ya avisó el Controlador.
             if (terminoSolo)
-                ParaTransmitir?.Invoke($"RECOLECTAR;{aldeano.PosicionX};{aldeano.PosicionY};0");
+            {
+                lock (Candado)
+                {
+                    Transmitir($"RECOLECTAR;{aldeano.PosicionX};{aldeano.PosicionY};0");
+                }
+            }
         }
 
         private void EntregarRecurso(TipoRecurso tipo, int cantidad)
@@ -503,7 +523,7 @@ namespace Modelo
                 enemigo.RecibirGolpe(danoReal);
 
                 // El Modelo avisa del ataque (con su daño ya calculado) para la red.
-                ParaTransmitir?.Invoke(
+                Transmitir(
                     $"ATACAR;{atacante.PosicionX};{atacante.PosicionY};{enemigo.PosicionX};{enemigo.PosicionY};{danoReal}");
                 GestorArchivos.RegistrarAccion(
                     JugadorLocal.Nombre,
@@ -544,7 +564,7 @@ namespace Modelo
 
                 // Se envía el ATAQUE (no el daño final): el rival aplica la MISMA fórmula
                 // con su copia del edificio y los dos lados coinciden.
-                ParaTransmitir?.Invoke($"ATACAR_EDIFICIO;{atacante.PosicionX};{atacante.PosicionY};" +
+                Transmitir($"ATACAR_EDIFICIO;{atacante.PosicionX};{atacante.PosicionY};" +
                              $"{edificioEnemigo.PosicionX};{edificioEnemigo.PosicionY};{atacante.AtaqueTotal}");
 
                 GestorArchivos.RegistrarAccion(JugadorLocal.Nombre, "Ataque",
@@ -613,7 +633,7 @@ namespace Modelo
                     if (!casilla.HasValue) continue; // sin hueco, se espera al próximo latido
                     TipoItem tipo = (TipoItem)_rng.Next(0, 4); // uno de los 4 al azar
                     if (ColocarItem(tipo, casilla.Value.X, casilla.Value.Y))
-                        ParaTransmitir?.Invoke($"ITEM;{tipo};{casilla.Value.X};{casilla.Value.Y}");
+                        Transmitir($"ITEM;{tipo};{casilla.Value.X};{casilla.Value.Y}");
                 }
             }
         }
@@ -979,8 +999,9 @@ namespace Modelo
                 Unidad unidad = JugadorEnemigo.Unidades.FirstOrDefault(
                     u => u.PosicionX == origenX && u.PosicionY == origenY);
                 if (unidad == null || !unidad.EstaViva) return null;
+                // Espejo de red: la copia rival OBEDECE, no opina. Si el rival dice
+                // que movió a su unidad, se la mueve (solo se protege el mapa).
                 if (!Tablero.EsCoordenadaValida(nuevoX, nuevoY)) return null;
-                if (!Tablero.EsCasillaLibre(nuevoX, nuevoY, JugadorLocal, JugadorEnemigo)) return null;
 
                 unidad.MoverA(nuevoX, nuevoY);
                 return unidad;
@@ -1029,9 +1050,9 @@ namespace Modelo
         {
             lock (Candado)
             {
+                // Espejo de red: la copia rival replica la construcción sin opinar
+                // (la casilla pudo estar libre en la máquina del rival y ocupada aquí).
                 if (!Tablero.EsCoordenadaValida(x, y)) return false;
-                if (Tablero.CasillaTieneRecurso(x, y)) return false;
-                if (!Tablero.EsCasillaLibre(x, y, JugadorLocal, JugadorEnemigo)) return false;
 
                 Edificio espejo = DatosDelJuego.CrearEdificio(tipo, x, y);
                 JugadorEnemigo.AgregarEdificio(espejo);
@@ -1049,8 +1070,8 @@ namespace Modelo
         {
             lock (Candado)
             {
+                // Espejo de red: la copia rival replica la unidad sin opinar.
                 if (!Tablero.EsCoordenadaValida(x, y)) return false;
-                if (!Tablero.EsCasillaLibre(x, y, JugadorLocal, JugadorEnemigo)) return false;
 
                 JugadorEnemigo.AgregarUnidad(DatosDelJuego.CrearUnidad(tipo, x, y));
                 return true;

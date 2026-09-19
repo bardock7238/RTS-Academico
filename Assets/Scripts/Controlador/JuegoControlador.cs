@@ -42,11 +42,6 @@ namespace Controlador
             // El Modelo arma el mundo entero (jugadores, mapa, partida, posiciones)
             // y arranca SUS tareas de fondo (reloj y, si soy host, el spawner).
             Motor = new Simulacion(nombreJugador, localArriba);
-
-            // Cuando el Modelo produce algo que debe anunciarse por red (un ataque
-            // con su daño calculado, una unidad que terminó de entrenar, un item que
-            // apareció solo, un aldeano que terminó su cosecha) lo reenviamos aquí.
-            Motor.ParaTransmitir += EnviarPorRed;
         }
 
         // ============ ACCIONES DE JUEGO (todas delegan al Modelo) ============
@@ -193,13 +188,28 @@ namespace Controlador
             EnviarPorRed($"SALUDO;{JugadorLocal.Nombre}");
         }
 
-        // La Vista llama esto en cada Update: aplica los mensajes que llegaron.
-        // [Concurrencia] Quien LLENA la cola es el hilo de escucha de la red
-        // (vive en Modelo/ConectorRed); quien la VACÍA es el hilo del juego (aquí).
-        // Nunca se tocan entre sí. Devuelve cuántos mensajes se procesaron.
+        // La Vista llama esto en cada Update: aplica los mensajes que llegaron y drena los
+        // que el Modelo quiere enviar. [Concurrencia] Quien LLENA las colas son los
+        // Tasks del Modelo (red y simulacion); quien las VACÍA es el hilo del juego
+        // (aquí, hilo principal). Nunca se tocan entre sí. Devuelve cuántos mensajes
+        // DE ENTRADA se procesaron.
         public int ProcesarMensajesRedPendientes()
         {
             if (RedPartida == null) return 0;
+
+            // [Concurrencia] SALIDA: lo que el Modelo encoló (ataque, entrenamiento
+            // terminado, item, recoleccion...) se envía SOLO si el tubo está vivo.
+            // Si el rival está desconectado, se quedan en cola y salen al reconectar.
+            if (RedPartida.EstaConectado)
+            {
+                while (Motor.HaySalientes)
+                {
+                    string saliente = Motor.SiguienteSaliente();
+                    if (saliente == null) break;
+                    EnviarPorRed(saliente);
+                }
+            }
+
             int procesados = 0;
             while (RedPartida.HayMensajes)
             {
@@ -223,10 +233,31 @@ namespace Controlador
         //
         // Cada mensaje se traduce a un método "Espejo" del Modelo, que se encarga de
         // su candado y de mutar la copia rival. Aquí solo parseamos y llevamos cuenta.
+        // [Concurrencia] Un mensaje truncado (por una reconexión a medias) NO debe
+        // reventar el parser: antes del switch se valida la aridad de cada comando.
+        private static readonly IReadOnlyDictionary<string, int> Aridad = new Dictionary<string, int>
+        {
+            { "SALUDO", 2 },
+            { "MOVER", 5 },
+            { "ATACAR", 6 },
+            { "ATACAR_EDIFICIO", 6 },
+            { "CONSTRUIR", 4 },
+            { "ENTRENAR", 4 },
+            { "RECOLECTAR", 4 },
+            { "ITEM", 4 },
+            { "RECOGER_ITEM", 4 }
+        };
+
         private void ProcesarMensajeRed(string mensaje)
         {
             string[] p = mensaje.Split(';');
-            if (p.Length < 2) return;
+            if (p.Length == 0) return;
+            if (!Aridad.TryGetValue(p[0], out int esperado) || p.Length < esperado)
+            {
+                GestorArchivos.RegistrarAccion("Sistema", "Red",
+                    $"Mensaje mal formado o incompleto: {mensaje}");
+                return;
+            }
 
             switch (p[0])
             {

@@ -178,8 +178,34 @@ namespace Modelo
             lock (_lockEnvio)
             {
                 if (!EstaConectado || _escritor == null) return false;
-                _escritor.WriteLine(mensaje);
-                return true;
+                try
+                {
+                    _escritor.WriteLine(mensaje);
+                    return true;
+                }
+                catch (IOException ex)
+                {
+                    // El tubo murió (rival caído, red cortada): se marca desconectado
+                    // y no se propaga la excepción (el hilo que llamó no debe morir).
+                    EstaConectado = false;
+                    GestorArchivos.RegistrarAccion("Sistema", "Red",
+                        "Fallo al enviar (tubo roto): " + ex.Message);
+                    return false;
+                }
+                catch (SocketException ex)
+                {
+                    EstaConectado = false;
+                    GestorArchivos.RegistrarAccion("Sistema", "Red",
+                        "Fallo al enviar (socket): " + ex.Message);
+                    return false;
+                }
+                catch (ObjectDisposedException ex)
+                {
+                    EstaConectado = false;
+                    GestorArchivos.RegistrarAccion("Sistema", "Red",
+                        "Tubo cerrado al enviar: " + ex.Message);
+                    return false;
+                }
             }
         }
 
