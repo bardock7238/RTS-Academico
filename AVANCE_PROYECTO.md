@@ -19,7 +19,7 @@
 
 ## Estado actual (última sesión: 19-sep)
 
-### ⭐ REVISIÓN EXTERNA + ARREGLOS DE ROBUSTEZ (19-sep) — Modelo FROZEN
+### REVISIÓN EXTERNA + ARREGLOS DE ROBUSTEZ (19-sep) — Modelo FROZEN
 
 Se hizo una revisión a fondo de arquitectura y se aplicaron los arreglos de red/concurrencia. **El Modelo queda CONGELADO** (no se le cambia más la lógica; priorizamos explicar en la defensa sobre seguir tocándolo).
 
@@ -38,7 +38,7 @@ Arreglos aplicados y verificados (Unity compila en batch; validación de escrito
    - `Detener()` drena la cola de salida, desuscribe el evento de red y hace `GestorArchivos.Flush()` antes de salir.
 7. **`DetenerRecoleccion` (M3)**: la entrada se quita del diccionario **al instante** (con guardia por token para que la Task vieja no pise un ciclo nuevo). Reiniciar recolección del mismo aldeano ya no falla en la ventana de ~1 s.
 
-### ⭐ REFACTOR DE ARQUITECTURA (16-sep): TODA la concurrencia vive en el MODELO
+### REFACTOR DE ARQUITECTURA (16-sep): TODA la concurrencia vive en el MODELO
 
 **Pedido de la profesora: los hilos/threads NO deben estar en el Controlador.** Refactor completo y VERDE (compile-check `PRUEBA OK` + red-test **71 OK, 0 FALLO**).
 
@@ -52,7 +52,7 @@ Arreglos aplicados y verificados (Unity compila en batch; validación de escrito
 - **`ConectorRed.cs` y `GestorArchivos.cs` viven en `Assets/Scripts/Modelo/`** (`namespace Modelo`): TODOS los archivos con hilos/candados están en el Modelo. El hilo de escucha TCP es el único hilo "de infraestructura" y quedó en el Modelo.
 - Para defensa oral: "Modelo = la simulación completa (estado + concurrencia); Controlador = orquesta que pide al Modelo y avisa al rival; Vista = solo pinta y llama al Controlador".
 
-### ⭐ CONCURRENCIA VISIBLE (16-sep): Instantánea, Detener y MODO BATALLA (Nivel 1)
+### CONCURRENCIA VISIBLE (16-sep): Instantánea, Detener y MODO BATALLA (Nivel 1)
 
 - **`Modelo/InstantaneaJuego.cs` + `Simulacion.Instantanea()`** — foto segura del mundo: copia las LISTAS bajo `lock(Candado)` (unidades local/enemigo, edificios, recursos, items + oro/madera/comida/tiempo/ganador). La Vista la llama 1 vez por frame y dibuja desde la copia. Fachada: `JuegoControlador.Instantanea()`.
 - **`Simulacion.Detener()` + `JuegoControlador.Detener()`** — apaga el motor al salir de la escena/Play (cancela reloj, spawner, entrenamientos, recolecciones, bucle de batalla; drena la salida y cierra la red; evita la "partida fantasma" y el puerto ocupado en el siguiente Play).

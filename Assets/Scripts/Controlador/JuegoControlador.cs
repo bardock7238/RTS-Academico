@@ -190,7 +190,7 @@ namespace Controlador
 
         // [Red] Antes de crear un conector nuevo se libera el anterior: un
         // TcpListener vivo tiene el puerto 5505 tomado y el segundo intento
-        // (reintento, cambio host↔cliente) fallaría con "address already in use".
+        // (reintento, cambio host/cliente) fallaría con "address already in use".
         private void PrepararConector()
         {
             if (RedPartida != null)
