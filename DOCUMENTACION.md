@@ -1,13 +1,36 @@
 # DOCUMENTACIÓN TÉCNICA — "Imperios en Guerra" (RTS en Unity)
 
+<style>
+  @page { margin: 10mm 12mm; }
+  body { font-family: "Segoe UI", system-ui, sans-serif; line-height: 1.5; }
+  h1, h2, h3, h4 { line-height: 1.25; }
+  pre { background: #f6f8fa; border: 1px solid #d0d7de; border-radius: 6px; padding: 10px 12px; overflow-x: auto; }
+  code { background: #f6f8fa; border-radius: 4px; padding: 1px 5px; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; }
+  th, td { border: 1px solid #d0d7de; padding: 6px 10px; }
+  th { background: #f6f8fa; }
+  @media print {
+    body { font-size: 11pt; line-height: 1.35; }
+    p, li { margin: 3px 0; }
+    h1 { margin: 0 0 8px; }
+    h2 { margin: 14px 0 6px; }
+    h3 { margin: 10px 0 4px; }
+    h1, h2, h3, h4 { break-after: avoid; page-break-after: avoid; }
+    pre, table, img { margin: 5px 0; break-inside: avoid; page-break-inside: avoid; }
+    .mermaid, svg { max-width: 100% !important; height: auto; page-break-inside: avoid; margin: 6px 0 !important; }
+  }
+</style>
+
 Diagramas de diseño del sistema. Reflejan el estado del Modelo congelado en el tag `modelo-1.0.0` (ramas `modelo` / `main`).
 
-> **Cómo renderizar:** los bloques ```mermaid``` se ven en GitHub/VS Code (extensión Mermaid) o en <https://mermaid.live>. Los bloques ```plantuml``` se renderizan en <https://www.plantuml.com/plantuml> o con la extensión PlantUML.
->
-> **Idea central de la arquitectura (MVC):**
-> - **Modelo** = toda la simulación y **toda la concurrencia** (hilos, locks, colas). Sin `UnityEngine`, por eso se prueba fuera de Unity.
-> - **Controlador** = puente delgado: traduce acciones de la Vista → Modelo, traduce la red → Modelo, y anuncia/carga logs. **No crea hilos.**
-> - **Vista** = solo pinta desde una instantánea y llama al Controlador.
+Los bloques `mermaid` se ven en GitHub, en VS Code (extensión Mermaid) o en https://mermaid.live. Los bloques `plantuml` se renderizan en https://www.plantuml.com/plantuml o con la extensión PlantUML.
+
+Idea central de la arquitectura (MVC):
+
+- **Modelo** = toda la simulación y **toda la concurrencia** (hilos, locks, colas). Sin `UnityEngine`, por eso se prueba fuera de Unity.
+- **Controlador** = puente delgado: traduce acciones de la Vista → Modelo, traduce la red → Modelo, y anuncia/carga logs. **No crea hilos.**
+- **Vista** = solo pinta desde una instantánea y llama al Controlador.
 
 ---
 
@@ -321,7 +344,7 @@ classDiagram
 
 ## 2. Diagrama de casos de uso
 
-> **Nota:** los casos de uso no son un tipo nativo de Mermaid. Van dos versiones: la de **Mermaid** (renderiza en GitHub/VS Code) y la de **PlantUML** (notación UML formal; se pega en <https://www.plantuml.com/plantuml>).
+Nota: los casos de uso no son un tipo nativo de Mermaid. Van dos versiones: la de Mermaid (renderiza en GitHub/VS Code) y la de PlantUML (notación UML formal; se pega en https://www.plantuml.com/plantuml).
 
 ### 2.1 Versión Mermaid (renderiza en GitHub)
 
@@ -366,15 +389,15 @@ flowchart LR
     UC07 -.->|include| UC19
 ```
 
-### 2.2 Versión formal PlantUML (requiere visor PlantUML)
+### 2.2 Versión formal PlantUML (texto para pegar en plantuml.com)
 
-```plantuml
+```text
 @startuml
 left to right direction
 skinparam packageStyle rectangle
 
 actor "Jugador" as J
-actor "Jugador Rival\n(2.ª instancia)" as R
+actor "Jugador Rival\n(segunda instancia)" as R
 
 rectangle "Imperios en Guerra (RTS)" {
   usecase "Construir edificio" as UC02
@@ -415,7 +438,7 @@ UC07 ..> UC19 : <<include>>
 
 ## 3. Diagramas de secuencia
 
-> **Formato del protocolo:** para que rendericen en cualquier visor, en los diagramas el comando se representa como `NOMBRE (campos)`. En el protocolo real (ver `ConectorRed.cs`) los campos van separados por `;`: `MOVER;<ox>;<oy>;<x>;<y>`, `ATACAR;<ax>;<ay>;<bx>;<by>;<dano>`, `ATACAR_EDIFICIO;<ax>;<ay>;<ex>;<ey>;<ataque>`, `CONSTRUIR;<Tipo>;<x>;<y>`, `ENTRENAR;<Tipo>;<x>;<y>`, `RECOLECTAR;<x>;<y>;<1|0>`, `ITEM;<TipoItem>;<x>;<y>`, `RECOGER_ITEM;<TipoItem>;<x>;<y>`, `FIN;<ganador>`.
+Formato del protocolo: para que rendericen en cualquier visor, en los diagramas el comando se representa como `NOMBRE (campos)`. En el protocolo real (ver `ConectorRed.cs`) los campos van separados por `;`: `MOVER;<ox>;<oy>;<x>;<y>`, `ATACAR;<ax>;<ay>;<bx>;<by>;<dano>`, `ATACAR_EDIFICIO;<ax>;<ay>;<ex>;<ey>;<ataque>`, `CONSTRUIR;<Tipo>;<x>;<y>`, `ENTRENAR;<Tipo>;<x>;<y>`, `RECOLECTAR;<x>;<y>;<1|0>`, `ITEM;<TipoItem>;<x>;<y>`, `RECOGER_ITEM;<TipoItem>;<x>;<y>`, `FIN;<ganador>`.
 
 ### 3.1 Mover una unidad y espejarlo en el rival
 
