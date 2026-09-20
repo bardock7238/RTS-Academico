@@ -24,7 +24,7 @@
 
 Diagramas de diseño del sistema. Reflejan el estado del Modelo congelado en el tag `modelo-1.0.0` (ramas `modelo` / `main`).
 
-Los bloques `mermaid` se ven en GitHub, en VS Code (extensión Mermaid) o en https://mermaid.live. Los bloques `plantuml` se renderizan en https://www.plantuml.com/plantuml o con la extensión PlantUML.
+Los bloques `mermaid` se ven en GitHub, en VS Code (extensión Mermaid) o en https://mermaid.live. El UML formal de la sección 2.2 va como imagen (generada con PlantUML) y su fuente queda justo debajo.
 
 Idea central de la arquitectura (MVC):
 
@@ -389,7 +389,11 @@ flowchart LR
     UC07 -.->|include| UC19
 ```
 
-### 2.2 Versión formal PlantUML (texto para pegar en plantuml.com)
+### 2.2 Versión formal PlantUML
+
+![Diagrama de casos de uso — versión formal PlantUML](Doc/img/casos-de-uso-plantuml.png)
+
+Fuente PlantUML (por si se quiere regenerar):
 
 ```text
 @startuml
