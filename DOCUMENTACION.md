@@ -321,6 +321,53 @@ classDiagram
 
 ## 2. Diagrama de casos de uso
 
+> **Nota:** los casos de uso no son un tipo nativo de Mermaid. Van dos versiones: la de **Mermaid** (renderiza en GitHub/VS Code) y la de **PlantUML** (notación UML formal; se pega en <https://www.plantuml.com/plantuml>).
+
+### 2.1 Versión Mermaid (renderiza en GitHub)
+
+```mermaid
+flowchart LR
+    J(["Jugador"])
+    R(["Jugador Rival - segunda instancia"])
+
+    subgraph SIS["Imperios en Guerra (RTS)"]
+        direction TB
+        UC02(["Construir edificio"])
+        UC03(["Entrenar unidad"])
+        UC05(["Mover unidad"])
+        UC06(["Atacar unidad enemiga"])
+        UC07(["Atacar edificio enemigo"])
+        UC08(["Recolectar recursos"])
+        UC09(["Recoger item"])
+        UC04(["Sincronizar acciones por red TCP"])
+        UC11(["Ver mapa e instantanea del juego"])
+        UC12(["Ver estado de partida / ganador"])
+        UC19(["Declarar ganador - FIN compartido"])
+        UC17(["Reconectar si el rival cae"])
+        UC18(["Modo Batalla - concurrencia masiva"])
+    end
+
+    J --> UC02
+    J --> UC03
+    J --> UC05
+    J --> UC06
+    J --> UC07
+    J --> UC08
+    J --> UC09
+    J --> UC11
+    J --> UC12
+    J --> UC18
+    J --> UC04
+    R --> UC04
+
+    UC04 -.->|extend| UC17
+    UC03 -.->|include - verifica derrota| UC12
+    UC06 -.->|include| UC19
+    UC07 -.->|include| UC19
+```
+
+### 2.2 Versión formal PlantUML (requiere visor PlantUML)
+
 ```plantuml
 @startuml
 left to right direction
