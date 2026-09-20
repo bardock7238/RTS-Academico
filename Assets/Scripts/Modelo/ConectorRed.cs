@@ -250,7 +250,7 @@ namespace Modelo
             Cerrar();
         }
 
-        // La IP que debe compartir el host con su compañero para poder conectarse.
+        // La IP que debe compartir el host con el rival para poder conectarse.
         public static string ObtenerIpLocal()
         {
             try

@@ -1,27 +1,5 @@
 # AVANCE DEL PROYECTO — "Imperios en Guerra" (RTS en Unity)
 
-<style>
-  @page { margin: 10mm 12mm; }
-  body { font-family: "Segoe UI", system-ui, sans-serif; line-height: 1.5; }
-  h1, h2, h3, h4 { line-height: 1.25; }
-  pre { background: #f6f8fa; border: 1px solid #d0d7de; border-radius: 6px; padding: 10px 12px; overflow-x: auto; }
-  code { background: #f6f8fa; border-radius: 4px; padding: 1px 5px; }
-  pre code { background: none; padding: 0; }
-  table { border-collapse: collapse; }
-  th, td { border: 1px solid #d0d7de; padding: 6px 10px; }
-  th { background: #f6f8fa; }
-  @media print {
-    body { font-size: 11pt; line-height: 1.35; }
-    p, li { margin: 3px 0; }
-    h1 { margin: 0 0 8px; }
-    h2 { margin: 14px 0 6px; }
-    h3 { margin: 10px 0 4px; }
-    h1, h2, h3, h4 { break-after: avoid; page-break-after: avoid; }
-    pre, table, img { margin: 5px 0; break-inside: avoid; page-break-inside: avoid; }
-    .mermaid, svg { max-width: 100% !important; height: auto; page-break-inside: avoid; margin: 6px 0 !important; }
-  }
-</style>
-
 ---
 
 ## Datos clave

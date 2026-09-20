@@ -3,7 +3,7 @@ using Controlador;
 using Modelo;
 
 //  PRUEBA DE INTEGRACIÓN: verificar que el Modelo + Controlador funcionan DENTRO
-//  de Unity (capa Vista vacía todavía; lo mismo que hacerá el compañero).
+//  de Unity (capa Vista vacía todavía; es la misma llamada que usará la Vista).
 //
 //  Cómo usarla (solo en modo edición):
 //    1) GameObject -> Create Empty

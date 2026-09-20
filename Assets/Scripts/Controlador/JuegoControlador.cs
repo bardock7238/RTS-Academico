@@ -159,7 +159,7 @@ namespace Controlador
 
         // RED (sockets TCP)
 
-        // Modo host: abre el puerto y espera a que un compañero se conecte.
+        // Modo host: abre el puerto y espera a que un rival se conecte.
         public bool HospedarRed(int puerto = 5505)
         {
             PrepararConector();

@@ -7,7 +7,7 @@ namespace Modelo
 {
     // Maneja configuracion.txt, log_partida.txt y resultado_final.txt.
     // No depende de UnityEngine, así que es fácil de probar fuera de Unity.
-    // Tu compañero solo necesita hacer, en algún script de arranque de Unity:
+    // Desde la Vista (en algún script de arranque de Unity):
     //   GestorArchivos.CarpetaDestino = Application.persistentDataPath;
     //
     // [Concurrencia] Productor-consumidor: muchos hilos de fondo escriben logs a la
