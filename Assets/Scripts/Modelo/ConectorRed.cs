@@ -45,7 +45,7 @@ namespace Modelo
 
         public bool HayMensajes => !_recibidos.IsEmpty;
 
-        // ============ MODO SERVIDOR (host): abro la casilla y espero 1 jugador ============
+        // MODO SERVIDOR (host): abro la casilla y espero 1 jugador
 
         public bool IniciarHost(int puerto)
         {
@@ -90,7 +90,7 @@ namespace Modelo
             }
         }
 
-        // ============ MODO CLIENTE: llamo al servidor ============
+        // MODO CLIENTE: llamo al servidor
 
         public bool Conectar(string ip, int puerto)
         {
@@ -137,7 +137,7 @@ namespace Modelo
             AlConectar?.Invoke();   // avisar al Controlador (reenviará el SALUDO)
         }
 
-        // ============ LECTURA EN SEGUNDO PLANO (bloqueante a propósito) ============
+        // LECTURA EN SEGUNDO PLANO (bloqueante a propósito)
 
         private void Escuchar()
         {
@@ -164,7 +164,7 @@ namespace Modelo
             }
         }
 
-        // ============ PARA EL HILO PRINCIPAL DEL JUEGO ============
+        // PARA EL HILO PRINCIPAL DEL JUEGO
 
         public string RecibirMensaje()
         {

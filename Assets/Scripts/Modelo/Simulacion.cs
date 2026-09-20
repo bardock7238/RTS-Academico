@@ -7,7 +7,6 @@ using System.Threading.Tasks;
 
 namespace Modelo
 {
-    // ============================================================================
     //  SIMULACIÓN (Modelo)
     //  ----------------------------------------------------------------------------
     //  "El mundo completo está AQUÍ, y AQUÍ único lugar donde vive la concurrencia."
@@ -32,7 +31,6 @@ namespace Modelo
     //      salida y el Controlador la drena desde el hilo principal (ver
     //      ProcesarMensajesRedPendientes). Encolar es no bloqueante: NUNCA se
     //      escribe a un socket dentro de lock(Candado).
-    // ============================================================================
     public class Simulacion
     {
         // [Concurrencia] Candado del MUNDO (lo posee el Modelo): toda mutación de
@@ -189,7 +187,7 @@ namespace Modelo
             GestorArchivos.RegistrarAccion(nombreJugador, "Inicio", "Partida inicializada.");
         }
 
-        // ============ API PARA LA VISTA (Unity) ============
+        // API PARA LA VISTA (Unity)
 
         // [Concurrencia] FOTO segura del mundo para dibujar. Copia las listas bajo el
         // candado, así la Vista itera sus propias copias sin chocar con los Tasks.
@@ -236,7 +234,7 @@ namespace Modelo
             }
         }
 
-        // ============ ACCIONES DEL JUGADOR (todas con lock(Candado) interno) ============
+        // ACCIONES DEL JUGADOR (todas con lock(Candado) interno)
 
         // 1. Mover Unidad
         public bool MoverUnidad(Unidad unidad, int nuevoX, int nuevoY)
@@ -593,7 +591,7 @@ namespace Modelo
             }
         }
 
-        // ============ VERIFICACIÓN DE GANADOR (revisa a AMBOS jugadores) ============
+        // VERIFICACIÓN DE GANADOR (revisa a AMBOS jugadores)
 
         public void VerificarGanador()
         {
@@ -625,7 +623,7 @@ namespace Modelo
             GestorArchivos.GuardarResultadoFinal($"¡Ganador: {ganador.Nombre}!");
         }
 
-        // ============ ITEMS (objetos del mapa, generados por concurrencia) ============
+        // ITEMS (objetos del mapa, generados por concurrencia)
 
         // [Concurrencia] SPAWNER DE ITEMS: solo el host corre este Task. Cada
         // IntervaloSpawnerMs siembra un item en una casilla libre y su evento anuncia
@@ -772,7 +770,7 @@ namespace Modelo
             GestorArchivos.RegistrarAccion(nombreJugador, "Item", "El Casco dejó de hacer efecto (defensa normal).");
         }
 
-        // ============ RELOJ DEL JUEGO (RTS en TIEMPO REAL, sin turnos) ============
+        // RELOJ DEL JUEGO (RTS en TIEMPO REAL, sin turnos)
 
         // [Concurrencia] Bucle de fondo: espera 1 segundo real y suma 1 al marcador
         // de la partida. Cada instancia (host y cliente) corre SU propio reloj, igual
@@ -792,7 +790,7 @@ namespace Modelo
             }
         }
 
-        // ============ BATALLA MASIVA (concurrencia — NIVEL 1) ============
+        // BATALLA MASIVA (concurrencia — NIVEL 1)
         // Un solo Task de fondo (el "bucle de simulación") late cada TickSimulacionMs
         // y avanza TODAS las unidades de IA dentro del candado del mundo. La
         // concurrencia es real (corre a la vez que el jugador, la red y la Vista),
@@ -992,7 +990,7 @@ namespace Modelo
             VerificarGanador();
         }
 
-        // ============ ESPEJO DE LA RED (el motor refleja la copia del rival) ============
+        // ESPEJO DE LA RED (el motor refleja la copia del rival)
         // Estos métodos NO avisan por red: los invoca el Controlador al RECIBIR un
         // mensaje, para aplicar en esta máquina lo que hizo el rival en la suya.
 
@@ -1132,7 +1130,7 @@ namespace Modelo
             }
         }
 
-        // ============ AYUDANTES ============
+        // AYUDANTES
 
         private bool EstanAdyacentes(Unidad unidad, Recurso recurso)
         {

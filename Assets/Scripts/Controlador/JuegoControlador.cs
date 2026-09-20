@@ -4,7 +4,6 @@ using Modelo;
 
 namespace Controlador
 {
-    // ============================================================================
     //  CONTROLADOR (capa delgada)
     //  ----------------------------------------------------------------------------
     //  Aquí NO vive la concurrencia: el motor concurrente está en Modelo/Simulacion
@@ -21,7 +20,6 @@ namespace Controlador
     //
     //  Los tiempos (cuánto tarda un entrenamiento, cada cuánto late el reloj...) los
     //  define el Modelo (Simulacion); el Controlador solo pide y avisa.
-    // ============================================================================
     public class JuegoControlador
     {
         // [Concurrencia aquí? NO.] El cerebro concurrente ES el Modelo.
@@ -44,7 +42,7 @@ namespace Controlador
             Motor = new Simulacion(nombreJugador, localArriba);
         }
 
-        // ============ ACCIONES DE JUEGO (todas delegan al Modelo) ============
+        // ACCIONES DE JUEGO (todas delegan al Modelo)
 
         // 1. Mover Unidad
         public bool MoverUnidad(Unidad unidad, int nuevoX, int nuevoY)
@@ -99,7 +97,7 @@ namespace Controlador
 
         public void VerificarGanador() => Motor.VerificarGanador();
 
-        // ============ MODO BATALLA (concurrencia masiva — Nivel 1) ============
+        // MODO BATALLA (concurrencia masiva — Nivel 1)
         // El motor (Modelo) late solo y hace pelear a las unidades de IA. La Vista
         // solo enciende/apaga el modo y lee las métricas para el HUD.
         public int IniciarBatalla(int unidadesPorLado) => Motor.IniciarBatalla(unidadesPorLado);
@@ -110,7 +108,7 @@ namespace Controlador
         public int BajasLocal => Motor.BajasLocal;
         public int BajasEnemigo => Motor.BajasEnemigo;
 
-        // ============ API PARA LA VISTA (Unity) ============
+        // API PARA LA VISTA (Unity)
 
         // Foto segura del mundo para pintar. La Vista la llama UNA vez por frame y
         // dibuja desde el resultado (evita leer listas que un Task está modificando).
@@ -159,7 +157,7 @@ namespace Controlador
             return true;
         }
 
-        // ============ RED (sockets TCP) ============
+        // RED (sockets TCP)
 
         // Modo host: abre el puerto y espera a que un compañero se conecte.
         public bool HospedarRed(int puerto = 5505)
