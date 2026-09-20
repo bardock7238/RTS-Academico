@@ -1,6 +1,6 @@
 # DOCUMENTACIÓN TÉCNICA — "Imperios en Guerra" (RTS en Unity)
 
-Diagramas de diseño del sistema. Reflejan el **estado actual del código** (rama `modelo` / `main`, commit `af7dbe2`, Modelo congelado en el tag `modelo-1.0.0`).
+Diagramas de diseño del sistema. Reflejan el estado del Modelo congelado en el tag `modelo-1.0.0` (ramas `modelo` / `main`).
 
 > **Cómo renderizar:** los bloques ```mermaid``` se ven en GitHub/VS Code (extensión Mermaid) o en <https://mermaid.live>. Los bloques ```plantuml``` se renderizan en <https://www.plantuml.com/plantuml> o con la extensión PlantUML.
 >
@@ -138,12 +138,16 @@ classDiagram
     }
 
     class Mapa {
-        +int Ancho
-        +int Alto
-        +List~Recurso~ Recursos
-        +List~Item~ Items
-        +EsCasillaLibre(int, int) bool
+        +const int Ancho
+        +const int Alto
+        +List~Recurso~ RecursosEnMapa
+        +EsCoordenadaValida(int, int) bool
+        +ObtenerRecursoEn(int, int) Recurso
+        +CasillaTieneRecurso(int, int) bool
+        +EsCasillaLibre(int, int, List~Unidad~, List~Edificio~) bool
         +EsCasillaLibre(int, int, Jugador, Jugador) bool
+        +EsCasillaEdificable(int, int, Jugador, Jugador) bool
+        +SeSolapan(Unidad, Edificio) bool
     }
 
     class Partida {
@@ -155,11 +159,15 @@ classDiagram
 
     class DatosDelJuego {
         <<static>>
-        +CrearUnidad(TipoUnidad) Unidad
-        +CrearEdificio(TipoEdificio) Edificio
+        +Dictionary~TipoUnidad,UnidadConfig~ UnidadesBase
+        +Dictionary~TipoEdificio,EdificioConfig~ EdificiosBase
+        +CrearUnidad(TipoUnidad, int, int) Unidad
+        +CrearEdificio(TipoEdificio, int, int, bool) Edificio
+        +ObtenerTipoEdificio(string) TipoEdificio
+        +UnidadesEntrenablesDe(TipoEdificio) List~TipoUnidad~
+        +CrearCentroUrbano(int, int) Edificio
         +CrearRecursosIniciales() List~Recurso~
-        +CrearCentroUrbano() Edificio
-        +ObtenerCostoUnidad(TipoUnidad)
+        +NombreDe(TipoItem) string
     }
 
     class InstantaneaJuego {
@@ -278,8 +286,8 @@ classDiagram
     %% Composiciones / agregaciones del Modelo
     Jugador "1" o-- "*" Unidad : unidades
     Jugador "1" o-- "*" Edificio : edificios
-    Mapa "1" o-- "*" Recurso : recursos
-    Mapa "1" o-- "*" Item : items
+    Mapa "1" o-- "*" Recurso : RecursosEnMapa
+    Simulacion "1" *-- "*" Item : _itemsGlobales
     Simulacion "1" *-- "1" Mapa : Tablero
     Simulacion "1" *-- "1" Partida : EstadoPartida
     Simulacion "1" *-- "2" Jugador : local / enemigo
@@ -374,7 +382,7 @@ sequenceDiagram
     S->>S: lock(Candado) — valida mapa/casilla y mueve
     S-->>C: true
     alt hay conexión
-        C->>CR: Enviar("MOVER;ox;oy;x;y")
+        C->>CR: Enviar("MOVER#59;ox#59;oy#59;x#59;y")
         CR-->>C: ok
     else sin conexión
         C->>C: MensajesDescartados++ + log "NO ENVIADO"
@@ -383,7 +391,7 @@ sequenceDiagram
 
     CR->>CR: Rival recibe la línea (hilo de escucha → cola)
     V->>C: ProcesarMensajesRedPendientes() (Update)
-    C->>CR: RecibirMensaje() → "MOVER;ox;oy;x;y"
+    C->>CR: RecibirMensaje() → "MOVER#59;ox#59;oy#59;x#59;y"
     C->>S: MoverUnidadRival(ox, oy, x, y)
     S->>S: lock(Candado) — espeja (sin validar ocupación)
 ```
@@ -392,20 +400,20 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
-    participant C as JuegoControlador (atacante)
+    participant C as JuegoControlador atacante
     participant S as Simulacion
     participant CR as ConectorRed
-    participant S2 as Simulacion (rival)
+    participant S2 as Simulacion rival
 
     C->>S: Atacar(atacante, enemigo)
     S->>S: lock(Candado) — valida rango
     S->>S: dano = max(0, AtaqueTotal - Defensa)
     S->>S: target.RecibirGolpe(dano) — resta lo MISMO del cálculo
-    S-->>C: true + Transmitir("ATACAR;ax;ay;bx;by;dano")
+    S-->>C: true + Transmitir("ATACAR#59;ax#59;ay#59;bx#59;by#59;dano")
     C->>CR: Enviar(...) (drena cola, fuera del lock)
     S->>S: Si murió → elimina + VerificarGanador()
 
-    CR->>S2: "ATACAR;ax;ay;bx;by;dano"
+    CR->>S2: "ATACAR#59;ax#59;ay#59;bx#59;by#59;dano"
     S2->>S2: lock(Candado) — AplicarAtaqueEnUnidadLocal(...)
     S2->>S2: RecibirGolpe(dano) — resta el MISMO daño
     S2->>S2: Si murió → elimina + VerificarGanador()
@@ -416,11 +424,11 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
-    participant C as JuegoControlador (local)
+    participant C as JuegoControlador local
     participant S as Simulacion
     participant E as Edificio
     participant CR as ConectorRed
-    participant S2 as Simulacion (rival)
+    participant S2 as Simulacion rival
 
     C->>S: EntrenarUnidad(TipoUnidad, edificio)
     S->>E: PuedeEntrenar(tipo)? y paga costo
@@ -428,9 +436,9 @@ sequenceDiagram
     Note over S: La unidad aparece DESPUÉS (async)
     S->>S: ... EsperarEntrenamiento(...) ...
     S->>S: lock(Candado) — crea la unidad junto al edificio
-    S->>S: Transmitir("ENTRENAR;Tipo;x;y") → cola de salida
-    C->>CR: Enviar("ENTRENAR;Tipo;x;y") (hilo principal)
-    CR->>S2: "ENTRENAR;Tipo;x;y"
+    S->>S: Transmitir("ENTRENAR#59;Tipo#59;x#59;y") → cola de salida
+    C->>CR: Enviar("ENTRENAR#59;Tipo#59;x#59;y") (hilo principal)
+    CR->>S2: "ENTRENAR#59;Tipo#59;x#59;y"
     S2->>S2: CrearUnidadRival(tipo, x, y) bajo lock
 ```
 
@@ -438,24 +446,24 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
-    participant Sp as SpawnerTask (Modelo, host)
+    participant Sp as SpawnerTask del Modelo
     participant S as Simulacion
     participant C as JuegoControlador
     participant CR as ConectorRed
-    participant S2 as Simulacion (rival)
+    participant S2 as Simulacion rival
     participant Ex as ExpiracionCascoTask
 
     Sp->>S: ColocarItem(TipoItem, x, y) cada IntervaloSpawnerMs
     S->>S: lock(Candado) — crea Item en el mapa
-    S->>S: Transmitir("ITEM;Tipo;x;y")
-    C->>CR: Enviar("ITEM;Tipo;x;y")
-    CR->>S2: "ITEM;Tipo;x;y" → ColocarItemRival(...) bajo lock
+    S->>S: Transmitir("ITEM#59;Tipo#59;x#59;y")
+    C->>CR: Enviar("ITEM#59;Tipo#59;x#59;y")
+    CR->>S2: "ITEM#59;Tipo#59;x#59;y" → ColocarItemRival(...) bajo lock
 
     C->>S: RecogerItem(unidad, item)
     S->>S: lock(Candado) — aplica efecto (cura/defensa/ataque/bonus)
-    S->>S: Transmitir("RECOGER_ITEM;Tipo;x;y")
-    C->>CR: Enviar("RECOGER_ITEM;Tipo;x;y")
-    CR->>S2: "RECOGER_ITEM;Tipo;x;y" → AplicarRecogidaRival(...)
+    S->>S: Transmitir("RECOGER_ITEM#59;Tipo#59;x#59;y")
+    C->>CR: Enviar("RECOGER_ITEM#59;Tipo#59;x#59;y")
+    CR->>S2: "RECOGER_ITEM#59;Tipo#59;x#59;y" → AplicarRecogidaRival(...)
     Note over S2: El rival replica el +10 del Casco para que<br/>los cálculos de daño sigan coincidiendo
 
     Ex->>S: Al pasar DuracionCascoSegundos
@@ -467,19 +475,19 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
-    participant S as Simulacion (detecta)
+    participant S as Simulacion detecta
     participant C as JuegoControlador
     participant CR as ConectorRed
-    participant S2 as Simulacion (rival)
-    participant C2 as JuegoControlador (rival)
+    participant S2 as Simulacion rival
+    participant C2 as JuegoControlador rival
 
     S->>S: VerificarGanador() → Finalizar(ganador)
     S-->>C: (polling) EstadoPartida.GanadorNombre != null
     C->>C: guard _ganadorAnunciado (una sola vez)
-    C->>CR: Enviar("FIN;ganador")
+    C->>CR: Enviar("FIN#59;ganador")
     C->>C: GuardarResultadoFinal(...) + GestorArchivos.Flush()
 
-    CR->>C2: "FIN;ganador" (drenaje en Update)
+    CR->>C2: "FIN#59;ganador" (drenaje en Update)
     C2->>S2: Finalizar(ganador) — mismo ganador
     C2->>C2: _ganadorAnunciado = true
     C2->>C2: GuardarResultadoFinal(...) — MISMO contenido
