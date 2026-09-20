@@ -429,6 +429,11 @@ namespace Modelo
                 if (_recolectoresActivos.TryGetValue(aldeano, out CancellationTokenSource cts))
                 {
                     cts.Cancel();
+                    // [M3] Se quita AHORA del diccionario (no al terminar la Task):
+                    // un nuevo IniciarRecoleccion sobre el mismo aldeano no debe
+                    // fallar mientras la tarea vieja termina de desenrollarse.
+                    _recolectoresActivos.Remove(aldeano);
+                    aldeano.Estado = EstadoUnidad.Idle;
                     return true;
                 }
                 return false;
@@ -472,8 +477,15 @@ namespace Modelo
 
             lock (Candado)
             {
-                _recolectoresActivos.Remove(aldeano);
-                aldeano.Estado = EstadoUnidad.Idle;
+                // [M3] Limpieza con guardia: si DetenerRecoleccion ya removió la
+                // entrada o un NUEVO ciclo tomó al aldeano, esta tarea vieja no pisa
+                // el estado ajeno. Solo modifica el registro cuyo token es el suyo.
+                if (_recolectoresActivos.TryGetValue(aldeano, out CancellationTokenSource ctsActual) &&
+                    ctsActual.Token == token)
+                {
+                    _recolectoresActivos.Remove(aldeano);
+                    aldeano.Estado = EstadoUnidad.Idle;
+                }
             }
 
             // Si terminó solo (yacimiento vacío o aldeano muerto), avisa al rival para
@@ -1093,7 +1105,18 @@ namespace Modelo
 
         public bool ColocarItemRival(TipoItem tipo, int x, int y)
         {
-            return ColocarItem(tipo, x, y);
+            lock (Candado)
+            {
+                // Espejo de red: replica SIN opinar (misma filosofía que los *Rival).
+                // La ocupación de casilla la validó el host en su máquina; aquí solo
+                // se protege el mapa y la duplicidad (idempotencia de la retransmisión).
+                if (_detenido || !EstadoPartida.EnEjecucion) return false;
+                if (!Tablero.EsCoordenadaValida(x, y)) return false;
+                if (_itemsGlobales.Any(i => i.PosicionX == x && i.PosicionY == y)) return false;
+
+                _itemsGlobales.Add(new Item(tipo, x, y));
+                return true;
+            }
         }
 
         public bool AplicarRecogidaRival(TipoItem tipo, int x, int y)

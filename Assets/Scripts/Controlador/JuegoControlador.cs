@@ -121,8 +121,25 @@ namespace Controlador
         public void Detener()
         {
             Motor.Detener();
-            RedPartida?.Dispose();
-            RedPartida = null;
+
+            // [Red] Antes de cortar el tubo se drena la cola de salida: un FIN o el
+            // último evento encolado todavía tiene la oportunidad de salir.
+            while (RedPartida != null && Motor.HaySalientes && RedPartida.EstaConectado)
+            {
+                string saliente = Motor.SiguienteSaliente();
+                if (saliente == null) break;
+                RedPartida.Enviar(saliente);
+            }
+
+            if (RedPartida != null)
+            {
+                RedPartida.AlConectar -= EnviarSaludoRed;
+                RedPartida.Dispose();
+                RedPartida = null;
+            }
+
+            // Asegura que los .txt quedaron escritos antes de salir del proceso.
+            GestorArchivos.Flush();
         }
 
         // Items: el Modelo ejecuta la lógica; esta capa anuncia por red.
@@ -147,8 +164,7 @@ namespace Controlador
         // Modo host: abre el puerto y espera a que un compañero se conecte.
         public bool HospedarRed(int puerto = 5505)
         {
-            RedPartida = new ConectorRed();
-            RedPartida.AlConectar += EnviarSaludoRed; // saludo inicial Y cada reconexión
+            PrepararConector();
             if (!RedPartida.IniciarHost(puerto))
             {
                 GestorArchivos.RegistrarAccion(JugadorLocal.Nombre, "Red",
@@ -163,8 +179,7 @@ namespace Controlador
         // Modo cliente: se une a la partida de otro host.
         public bool ConectarRed(string ip, int puerto = 5505)
         {
-            RedPartida = new ConectorRed();
-            RedPartida.AlConectar += EnviarSaludoRed; // saludo inicial Y cada reconexión
+            PrepararConector();
             if (!RedPartida.Conectar(ip, puerto))
             {
                 GestorArchivos.RegistrarAccion(JugadorLocal.Nombre, "Red",
@@ -175,12 +190,36 @@ namespace Controlador
             return true;
         }
 
+        // [Red] Antes de crear un conector nuevo se libera el anterior: un
+        // TcpListener vivo tiene el puerto 5505 tomado y el segundo intento
+        // (reintento, cambio host↔cliente) fallaría con "address already in use".
+        private void PrepararConector()
+        {
+            if (RedPartida != null)
+            {
+                RedPartida.AlConectar -= EnviarSaludoRed;
+                RedPartida.Dispose();
+                RedPartida = null;
+            }
+            RedPartida = new ConectorRed();
+            RedPartida.AlConectar += EnviarSaludoRed; // saludo inicial Y cada reconexión
+        }
+
         // Los efectos DE MI jugador NO se aplican dos veces: solo se avisa al rival
         // para que refleje la acción en su copia. El rival procesa con ProcesarMensajesRedPendientes.
+        public int MensajesDescartados { get; private set; }
+
         private void EnviarPorRed(string mensaje)
         {
             if (RedPartida != null && RedPartida.EstaConectado)
-                RedPartida.Enviar(mensaje);
+            {
+                if (RedPartida.Enviar(mensaje)) return;
+            }
+            // [Red] Un mensaje que no pudo salir queda a la vista (HUD) y en el log:
+            // es exactamente el punto donde nace un desync, y no debe pasar en silencio.
+            MensajesDescartados++;
+            GestorArchivos.RegistrarAccion("Sistema", "Red",
+                $"NO ENVIADO (sin conexión): {mensaje}");
         }
 
         public void EnviarSaludoRed()
@@ -215,8 +254,28 @@ namespace Controlador
             {
                 string mensaje = RedPartida.RecibirMensaje();
                 if (mensaje == null) break;
-                ProcesarMensajeRed(mensaje);
+                try
+                {
+                    ProcesarMensajeRed(mensaje);
+                }
+                catch (Exception ex)
+                {
+                    // [Red] Frontera con datos que vienen de fuera del proceso: un
+                    // mensaje malo NO debe tumbar el Update() del juego. Se descarta
+                    // y se deja constancia para no perder el desync en silencio.
+                    GestorArchivos.RegistrarAccion("Sistema", "Red",
+                        $"Mensaje descartado por error ({ex.GetType().Name}): {mensaje}");
+                }
                 procesados++;
+            }
+
+            // [Red] Si este lado fue el que detectó la victoria, anuncia el FIN una
+            // sola vez para que la otra máquina cierre con el MISMO ganador (M6).
+            string ganador = EstadoPartida.GanadorNombre;
+            if (ganador != null && _ganadorAnunciado == null)
+            {
+                _ganadorAnunciado = ganador;
+                EnviarPorRed($"FIN;{ganador}");
             }
             return procesados;
         }
@@ -230,6 +289,7 @@ namespace Controlador
         // "RECOLECTAR;x;y;1|0"
         // "ITEM;TipoItem;x;y"
         // "RECOGER_ITEM;TipoItem;x;y"
+        // "FIN;ganador"
         //
         // Cada mensaje se traduce a un método "Espejo" del Modelo, que se encarga de
         // su candado y de mutar la copia rival. Aquí solo parseamos y llevamos cuenta.
@@ -245,8 +305,13 @@ namespace Controlador
             { "ENTRENAR", 4 },
             { "RECOLECTAR", 4 },
             { "ITEM", 4 },
-            { "RECOGER_ITEM", 4 }
+            { "RECOGER_ITEM", 4 },
+            { "FIN", 2 }
         };
+
+        // [Concurrencia] El guard del FIN anunciado: evita el rebote infinito si las
+        // dos máquinas detectan la victoria a la vez y que el Local no anuncie dos veces.
+        private string _ganadorAnunciado;
 
         private void ProcesarMensajeRed(string mensaje)
         {
@@ -294,7 +359,14 @@ namespace Controlador
                 case "CONSTRUIR":
                 {
                     if (!int.TryParse(p[2], out int bx) || !int.TryParse(p[3], out int by)) return;
-                    TipoEdificio tipo = DatosDelJuego.ObtenerTipoEdificio(p[1]);
+                    // [Red] Sin Enum.TryParse aquí el default silencioso de
+                    // ObtenerTipoEdificio regalaría un Centro Urbano al rival.
+                    if (!Enum.TryParse(p[1], true, out TipoEdificio tipo))
+                    {
+                        GestorArchivos.RegistrarAccion(JugadorEnemigo.Nombre, "Red",
+                            $"Tipo de edificio inválido: {p[1]}");
+                        return;
+                    }
                     if (Motor.CrearEdificioRival(tipo, bx, by))
                         GestorArchivos.RegistrarAccion(JugadorEnemigo.Nombre, "Red",
                             $"Rival construyó {tipo} en ({bx},{by}).");
@@ -355,6 +427,20 @@ namespace Controlador
                     if (Motor.AplicarRecogidaRival(tipo, ix, iy))
                         GestorArchivos.RegistrarAccion(JugadorEnemigo.Nombre, "Red",
                             $"Rival recogió {DatosDelJuego.NombreDe(tipo)} en ({ix},{iy}).");
+                    break;
+                }
+
+                case "FIN":
+                {
+                    // FIN;ganador → el rival ya detectó la victoria y la anunció.
+                    // Si yo aún no declaré ganador, me alineo con su resultado
+                    // (así ningún lado escribe dos archivos de resultado distintos).
+                    if (_ganadorAnunciado != null) break;
+                    _ganadorAnunciado = p[1];
+                    Motor.EstadoPartida.Finalizar(p[1]);
+                    GestorArchivos.GuardarResultadoFinal($"¡Ganador: {p[1]}!");
+                    GestorArchivos.RegistrarAccion("Sistema", "Red",
+                        $"Fin de partida anunciado por el rival: {p[1]}");
                     break;
                 }
             }
