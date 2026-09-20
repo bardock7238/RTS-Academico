@@ -415,6 +415,8 @@ UC07 ..> UC19 : <<include>>
 
 ## 3. Diagramas de secuencia
 
+> **Formato del protocolo:** para que rendericen en cualquier visor, en los diagramas el comando se representa como `NOMBRE (campos)`. En el protocolo real (ver `ConectorRed.cs`) los campos van separados por `;`: `MOVER;<ox>;<oy>;<x>;<y>`, `ATACAR;<ax>;<ay>;<bx>;<by>;<dano>`, `ATACAR_EDIFICIO;<ax>;<ay>;<ex>;<ey>;<ataque>`, `CONSTRUIR;<Tipo>;<x>;<y>`, `ENTRENAR;<Tipo>;<x>;<y>`, `RECOLECTAR;<x>;<y>;<1|0>`, `ITEM;<TipoItem>;<x>;<y>`, `RECOGER_ITEM;<TipoItem>;<x>;<y>`, `FIN;<ganador>`.
+
 ### 3.1 Mover una unidad y espejarlo en el rival
 
 ```mermaid
@@ -429,7 +431,7 @@ sequenceDiagram
     S->>S: lock(Candado) — valida mapa/casilla y mueve
     S-->>C: true
     alt hay conexión
-        C->>CR: Enviar("MOVER#59;ox#59;oy#59;x#59;y")
+        C->>CR: Enviar comando MOVER (ox, oy, x, y)
         CR-->>C: ok
     else sin conexión
         C->>C: MensajesDescartados++ + log "NO ENVIADO"
@@ -438,7 +440,7 @@ sequenceDiagram
 
     CR->>CR: Rival recibe la línea (hilo de escucha → cola)
     V->>C: ProcesarMensajesRedPendientes() (Update)
-    C->>CR: RecibirMensaje() → "MOVER#59;ox#59;oy#59;x#59;y"
+    C->>CR: RecibirMensaje() → comando MOVER (ox, oy, x, y)
     C->>S: MoverUnidadRival(ox, oy, x, y)
     S->>S: lock(Candado) — espeja (sin validar ocupación)
 ```
@@ -456,11 +458,11 @@ sequenceDiagram
     S->>S: lock(Candado) — valida rango
     S->>S: dano = max(0, AtaqueTotal - Defensa)
     S->>S: target.RecibirGolpe(dano) — resta lo MISMO del cálculo
-    S-->>C: true + Transmitir("ATACAR#59;ax#59;ay#59;bx#59;by#59;dano")
+    S-->>C: true + Transmitir comando ATACAR (ax, ay, bx, by, dano)
     C->>CR: Enviar(...) (drena cola, fuera del lock)
     S->>S: Si murió → elimina + VerificarGanador()
 
-    CR->>S2: "ATACAR#59;ax#59;ay#59;bx#59;by#59;dano"
+    CR->>S2: comando ATACAR (ax, ay, bx, by, dano)
     S2->>S2: lock(Candado) — AplicarAtaqueEnUnidadLocal(...)
     S2->>S2: RecibirGolpe(dano) — resta el MISMO daño
     S2->>S2: Si murió → elimina + VerificarGanador()
@@ -483,9 +485,9 @@ sequenceDiagram
     Note over S: La unidad aparece DESPUÉS (async)
     S->>S: ... EsperarEntrenamiento(...) ...
     S->>S: lock(Candado) — crea la unidad junto al edificio
-    S->>S: Transmitir("ENTRENAR#59;Tipo#59;x#59;y") → cola de salida
-    C->>CR: Enviar("ENTRENAR#59;Tipo#59;x#59;y") (hilo principal)
-    CR->>S2: "ENTRENAR#59;Tipo#59;x#59;y"
+    S->>S: Transmitir comando ENTRENAR (Tipo, x, y) → cola de salida
+    C->>CR: Enviar comando ENTRENAR (Tipo, x, y) (hilo principal)
+    CR->>S2: comando ENTRENAR (Tipo, x, y)
     S2->>S2: CrearUnidadRival(tipo, x, y) bajo lock
 ```
 
@@ -502,15 +504,15 @@ sequenceDiagram
 
     Sp->>S: ColocarItem(TipoItem, x, y) cada IntervaloSpawnerMs
     S->>S: lock(Candado) — crea Item en el mapa
-    S->>S: Transmitir("ITEM#59;Tipo#59;x#59;y")
-    C->>CR: Enviar("ITEM#59;Tipo#59;x#59;y")
-    CR->>S2: "ITEM#59;Tipo#59;x#59;y" → ColocarItemRival(...) bajo lock
+    S->>S: Transmitir comando ITEM (Tipo, x, y)
+    C->>CR: Enviar comando ITEM (Tipo, x, y)
+    CR->>S2: comando ITEM (Tipo, x, y) → ColocarItemRival(...) bajo lock
 
     C->>S: RecogerItem(unidad, item)
     S->>S: lock(Candado) — aplica efecto (cura/defensa/ataque/bonus)
-    S->>S: Transmitir("RECOGER_ITEM#59;Tipo#59;x#59;y")
-    C->>CR: Enviar("RECOGER_ITEM#59;Tipo#59;x#59;y")
-    CR->>S2: "RECOGER_ITEM#59;Tipo#59;x#59;y" → AplicarRecogidaRival(...)
+    S->>S: Transmitir comando RECOGER_ITEM (Tipo, x, y)
+    C->>CR: Enviar comando RECOGER_ITEM (Tipo, x, y)
+    CR->>S2: comando RECOGER_ITEM (Tipo, x, y) → AplicarRecogidaRival(...)
     Note over S2: El rival replica el +10 del Casco para que<br/>los cálculos de daño sigan coincidiendo
 
     Ex->>S: Al pasar DuracionCascoSegundos
@@ -531,10 +533,10 @@ sequenceDiagram
     S->>S: VerificarGanador() → Finalizar(ganador)
     S-->>C: (polling) EstadoPartida.GanadorNombre != null
     C->>C: guard _ganadorAnunciado (una sola vez)
-    C->>CR: Enviar("FIN#59;ganador")
+    C->>CR: Enviar comando FIN (ganador)
     C->>C: GuardarResultadoFinal(...) + GestorArchivos.Flush()
 
-    CR->>C2: "FIN#59;ganador" (drenaje en Update)
+    CR->>C2: comando FIN (ganador) (drenaje en Update)
     C2->>S2: Finalizar(ganador) — mismo ganador
     C2->>C2: _ganadorAnunciado = true
     C2->>C2: GuardarResultadoFinal(...) — MISMO contenido
