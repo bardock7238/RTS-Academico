@@ -32,10 +32,10 @@
 - **Fecha límite (avance):** 22 de septiembre.
 - **Patrón exigido por la guía:** MVC, concurrencia con hilos, red, archivos de log.
 
-## Reparto del equipo
+## Reparto del trabajo
 
-- **Johan:** capa **Modelo** + **Controlador**.
-- **Compañero:** capa **Vista** en Unity (sprites, escenas, prefabs) — *aún no la ha empezado*.
+- **Modelo + Controlador:** `Assets/Scripts/Modelo/` y `Assets/Scripts/Controlador/`.
+- **Vista:** escena Unity (sprites, escenas, prefabs).
 
 ---
 
@@ -117,7 +117,7 @@ Arreglos aplicados y verificados (Unity compila en batch; validación de escrito
 - `.gitignore` ignora `configuracion.txt`, `log_partida.txt`, `resultado_final.txt` (y ahora `AVANCE_PROYECTO.md` está VERSIONADO).
 - Regla del repo: nombres de commits neutrales (tipos/spans convencionales, sin menciones de ninguna herramienta).
 
-### Pruebas (concepto a repetir)
+### Pruebas
 
 Se validó fuera de Unity (los scripts no usan `UnityEngine`), en proyectos temporales de escritorio (fuera del repo):
 
@@ -193,26 +193,3 @@ Modelo congelado: estas se documentan y se explican, no se arreglan ("deuda téc
 - **Reconexión (bucle + eventos)**: ciclos `CicloServidor`/`CicloCliente` + evento `AlConectar` para reenviar el `SALUDO` sin intervención humana.
 - **RTS en tiempo real = reloj concurrente**: cada instancia tiene SU propio reloj y su copia de simulación; solo se intercambian las ACCIONES (patrón tipo lockstep).
 - **Cola de salida (I/O fuera del candado)**: el Modelo ENCOLA lo que debe anunciar y el Controlador hace el socket desde el hilo principal → nunca se escribe a red dentro de `lock(Candado)`.
-
----
-
-## PENDIENTE (siguientes pasos)
-
-0. **Modelo congelado (FROZEN, tag `modelo-1.0.0`)** — no se toca más su lógica salvo necesidad crítica de última hora.
-1. **Vista (compañero)**: escena Unity con mapa/sprrites por enum, barras de vida/progreso, HUD de recursos y red (`HospedarRed`/`ConectarRed`), HUD de batalla, panel de fin de partida. El Modelo ya expone todo (enums, `Instantanea()`, `Detener()`, `ProcesarMensajesRedPendientes()`, `MensajesDescartados`). Recomendado: `ArranqueJuego` único dueño del `JuegoControlador`; `Instantanea()` llamada UNA vez por frame; `Detener()` en `OnDestroy`/`OnApplicationQuit`.
-2. **Documentación**: `AVANCE_PROYECTO.md` (este archivo), diagrama de clases UML, casos de uso, diagramas de secuencia (mover+espejo, ataque sincronizado, entrenamiento por red, spawn/pickup de item, fin de partida), mapa de concurrencia (7 Tasks + 1 hilo + 3 candados). Todo en Mermaid/PlantUML dentro de un `.md`.
-3. **Pruebas EditMode de Unity** (3 casos pedidos): concurrencia, red y victoria del lado del editor.
-4. **Evidencia de ejecución**: capturas de `configuracion.txt`, `log_partida.txt`, `resultado_final.txt` + log de una partida con dos jugadores.
-5. **README** actualizado con instrucciones de ejecución en dos máquinas.
-6. **Guion de la demo**: orden exacto de clics (evitar detener+reiniciar recolección sobre el MISMO aldeano en el mismo instante, etc.).
-7. **Opcional:** Nivel 2 de batalla (`Parallel.For`) como optimización para el informe.
-
-## Instrucciones para la siguiente sesión
-
-- Leer los scripts `Assets/Scripts/Modelo/*.cs` y `Assets/Scripts/Controlador/*.cs` antes de tocar.
-- **JEFATURA ROSA (requisito de la profesora): NUNCA crear hilos/tasks/locks en el Controlador.** Toda la concurrencia se agrega en `Modelo/Simulacion.cs` (motor).
-- Mantener el Modelo **sin UnityEngine** (POCO) para poder probarlo fuera de Unity.
-- Antes de hacer push: `git fetch` + `git status`, y resolver conflictos a mano integrando lo mejor de cada versión.
-- Para validar la lógica: correr la suite de escritorio (proyectos temporales locales, fuera del repo) → `PRUEBA OK`.
-- Para validar la red: correr la suite de escritorio de red → debe dar **71 OK, 0 fallos**.
-- Para la demo en 2 PCs reales: consultar la sección "Cómo probar la red en 2 máquinas reales" (arriba). Recordar `netsh` en el host.

@@ -336,6 +336,53 @@ classDiagram
     Edificio ..> EstadoEdificio
     Recurso ..> TipoRecurso
     Item ..> TipoItem
+
+    %% ================= VISTA (boceto) =================
+    class ArranqueJuego {
+        <<MonoBehaviour>>
+        +JuegoControlador Controlador
+        +CrearControlador()
+        +DetenerJuego()
+    }
+    class HUD {
+        <<MonoBehaviour>>
+        +string Oro, Madera, Comida, Tiempo
+        +int MensajesDescartados
+        +Actualizar(InstantaneaJuego)
+    }
+    class MapaVista {
+        <<MonoBehaviour>>
+        +Actualizar(InstantaneaJuego)
+        +Dibujar(InstantaneaJuego)
+    }
+    class PanelAcciones {
+        <<MonoBehaviour>>
+        +Construir()
+        +Entrenar()
+        +Atacar()
+        +RecogerItem()
+    }
+    class PanelRed {
+        <<MonoBehaviour>>
+        +Hospedar(int) bool
+        +Conectar(string, int) bool
+    }
+    class PanelFinPartida {
+        <<MonoBehaviour>>
+        +string Ganador
+        +Mostrar(InstantaneaJuego)
+    }
+
+    %% La Vista solo lee y delega en el Controlador
+    ArranqueJuego "1" o-- "1" JuegoControlador : único dueño
+    HUD ..> JuegoControlador : lee
+    MapaVista ..> JuegoControlador : lee
+    PanelAcciones ..> JuegoControlador : acciones
+    PanelRed ..> JuegoControlador : red
+    PanelFinPartida ..> JuegoControlador : estado
+    HUD ..> InstantaneaJuego : lee copia
+    MapaVista ..> InstantaneaJuego : lee copia
+    PanelFinPartida ..> InstantaneaJuego : lee copia
 ```
 
 **Nota sobre `JuegoControlador.Motor`:** es `public` a propósito. Las pruebas de escritorio (fuera de Unity) necesitan ajustar los tiempos del motor (`CicloRecoleccionMs`, `EsperarEntrenamiento`, etc.) y consultar contadores de batalla. Envolverlo fue una mejora evaluada y descartada por romper esas suites; queda documentado como decisión.
@@ -644,7 +691,7 @@ flowchart TB
 
 ---
 
-## 5. Anexo — Arquitectura de la Vista (para el compañero)
+## 5. Anexo — Arquitectura de la Vista
 
 La Vista no calcula reglas; solo dibuja y delega:
 
@@ -664,9 +711,9 @@ flowchart LR
     TILES -->|"Detener() en OnDestroy"| JC
 ```
 
-**Reglas para la Vista:**
-- Llamar `Instantanea()` **una sola vez por `Update()`** y dibujar desde esa copia.
-- Llamar `ProcesarMensajesRedPendientes()` en `Update()` (drena la red).
-- Llamar `Detener()` en `OnDestroy` / `OnApplicationQuit` (apaga el motor, cierra la red y hace `Flush` de logs).
-- Mostrar `MensajesDescartados` en el HUD: si crece, la conexión se cayó (aviso temprano de desync).
-- Dibujar los sprites mapeando los `enum` (`TipoUnidad`, `TipoEdificio`, `TipoRecurso`, `TipoItem`) a imágenes.
+**Contrato de la Vista:**
+- `Instantanea()` se llama **una sola vez por `Update()`** y la Vista dibuja desde esa copia.
+- `ProcesarMensajesRedPendientes()` se llama en `Update()` (drena la red).
+- `Detener()` se llama en `OnDestroy` / `OnApplicationQuit` (apaga el motor, cierra la red y hace `Flush` de logs).
+- `MensajesDescartados` se muestra en el HUD: si crece, la conexión se cayó (aviso temprano de desync).
+- Los sprites se dibujan mapeando los `enum` (`TipoUnidad`, `TipoEdificio`, `TipoRecurso`, `TipoItem`) a imágenes.
