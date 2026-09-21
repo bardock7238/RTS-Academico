@@ -15,6 +15,8 @@ namespace Modelo
         public int CostoOro { get; set; }
         public int CostoMadera { get; set; }
         public int CostoComida { get; set; }
+        public int CostoHierro { get; set; }
+        public int CostoPiedra { get; set; }
         public int TiempoEntrenamientoSegundos { get; set; }
         public bool EsRecolector { get; set; }    // True solo para el Aldeano
         public int CapacidadRecoleccion { get; set; } // Cuánto recolecta por ciclo

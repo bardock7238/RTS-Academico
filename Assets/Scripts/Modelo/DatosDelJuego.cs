@@ -13,6 +13,8 @@ namespace Modelo
         public int CostoOro { get; set; }
         public int CostoMadera { get; set; }
         public int CostoComida { get; set; }
+        public int CostoHierro { get; set; }
+        public int CostoPiedra { get; set; }
         public int TiempoEntrenamientoSegundos { get; set; }
         public bool EsRecolector { get; set; }
         public int CapacidadRecoleccion { get; set; }   // Cuánto recolecta por ciclo (0 = no recolecta)
@@ -25,6 +27,8 @@ namespace Modelo
         public int CostoOro { get; set; }
         public int CostoMadera { get; set; }
         public int CostoComida { get; set; }
+        public int CostoHierro { get; set; }
+        public int CostoPiedra { get; set; }
         public int TiempoConstruccionSegundos { get; set; }
         public List<TipoUnidad> UnidadesEntrenables { get; set; } = new List<TipoUnidad>();
     }
@@ -61,6 +65,7 @@ namespace Modelo
                         RangoAtaque = 1,
                         CostoOro = 30,
                         CostoComida = 60,
+                        CostoHierro = 20,
                         TiempoEntrenamientoSegundos = 20
                     }
                 },
@@ -72,8 +77,10 @@ namespace Modelo
                         Ataque = 12,
                         Defensa = 1,
                         RangoAtaque = 4,
+                        CostoMadera = 20,
                         CostoOro = 40,
                         CostoComida = 50,
+                        CostoHierro = 10,
                         TiempoEntrenamientoSegundos = 25
                     }
                 },
@@ -87,6 +94,7 @@ namespace Modelo
                         RangoAtaque = 1,
                         CostoOro = 60,
                         CostoComida = 80,
+                        CostoHierro = 50,
                         TiempoEntrenamientoSegundos = 30
                     }
                 }
@@ -101,6 +109,7 @@ namespace Modelo
                     {
                         VidaMaxima = 600,
                         CostoMadera = 350,
+                        CostoPiedra = 200,
                         TiempoConstruccionSegundos = 40,
                         UnidadesEntrenables = new List<TipoUnidad> { TipoUnidad.Aldeano }
                     }
@@ -112,6 +121,8 @@ namespace Modelo
                         VidaMaxima = 500,
                         CostoMadera = 200,
                         CostoOro = 50,
+                        CostoHierro = 50,
+                        CostoPiedra = 100,
                         TiempoConstruccionSegundos = 30,
                         UnidadesEntrenables = new List<TipoUnidad>
                         {
@@ -128,6 +139,7 @@ namespace Modelo
                         VidaMaxima = 400,
                         CostoMadera = 150,
                         CostoOro = 100,
+                        CostoPiedra = 250,
                         TiempoConstruccionSegundos = 25
                     }
                 },
@@ -137,6 +149,7 @@ namespace Modelo
                     {
                         VidaMaxima = 250,
                         CostoMadera = 50,
+                        CostoPiedra = 20,
                         TiempoConstruccionSegundos = 15
                     }
                 }
@@ -157,6 +170,8 @@ namespace Modelo
                 CostoOro = c.CostoOro,
                 CostoMadera = c.CostoMadera,
                 CostoComida = c.CostoComida,
+                CostoHierro = c.CostoHierro,
+                CostoPiedra = c.CostoPiedra,
                 TiempoEntrenamientoSegundos = c.TiempoEntrenamientoSegundos,
                 EsRecolector = c.EsRecolector,
                 CapacidadRecoleccion = c.CapacidadRecoleccion,
@@ -178,6 +193,8 @@ namespace Modelo
                 CostoOro = c.CostoOro,
                 CostoMadera = c.CostoMadera,
                 CostoComida = c.CostoComida,
+                CostoHierro = c.CostoHierro,
+                CostoPiedra = c.CostoPiedra,
                 TiempoConstruccionSegundos = c.TiempoConstruccionSegundos,
                 UnidadesEntrenables = new List<TipoUnidad>(c.UnidadesEntrenables),
                 PosicionX = x,
@@ -218,7 +235,11 @@ namespace Modelo
                 new Recurso(TipoRecurso.Comida, 300, 7, 7),
                 new Recurso(TipoRecurso.Madera, 400, 12, 3),
                 new Recurso(TipoRecurso.Oro, 400, 3, 12),
-                new Recurso(TipoRecurso.Comida, 300, 11, 6)
+                new Recurso(TipoRecurso.Comida, 300, 11, 6),
+                new Recurso(TipoRecurso.Hierro, 300, 2, 8),
+                new Recurso(TipoRecurso.Hierro, 300, 12, 8),
+                new Recurso(TipoRecurso.Piedra, 300, 8, 2),
+                new Recurso(TipoRecurso.Piedra, 300, 8, 12)
             };
         }
 

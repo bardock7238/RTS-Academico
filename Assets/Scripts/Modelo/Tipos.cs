@@ -23,7 +23,9 @@ namespace Modelo
     {
         Madera,
         Oro,
-        Comida
+        Comida,
+        Hierro,
+        Piedra
     }
 
     // Tipos de items que el host siembra en el mapa (uno por categoría, todos

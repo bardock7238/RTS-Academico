@@ -9,6 +9,8 @@ namespace Modelo
         public int Oro { get; set; }
         public int Madera { get; set; }
         public int Comida { get; set; }
+        public int Hierro { get; set; }
+        public int Piedra { get; set; }
         public List<Unidad> Unidades { get; set; }
         public List<Edificio> Edificios { get; set; } // Lista de estructuras del jugador
 
@@ -24,32 +26,38 @@ namespace Modelo
             Oro = 100;      // Recursos iniciales para empezar la partida
             Madera = 100;
             Comida = 100;
+            Hierro = 100;
+            Piedra = 100;
             Unidades = new List<Unidad>();
             Edificios = new List<Edificio>();
         }
 
         // ---- Gestión de recursos ----
 
-        public bool PuedePagar(int madera, int oro, int comida)
+        public bool PuedePagar(int madera, int oro, int comida, int hierro = 0, int piedra = 0)
         {
-            return Madera >= madera && Oro >= oro && Comida >= comida;
+            return Madera >= madera && Oro >= oro && Comida >= comida && Hierro >= hierro && Piedra >= piedra;
         }
 
         // Descuenta los recursos si hay saldo suficiente; si no, no modifica nada.
-        public bool Gastar(int madera, int oro, int comida)
+        public bool Gastar(int madera, int oro, int comida, int hierro = 0, int piedra = 0)
         {
-            if (!PuedePagar(madera, oro, comida)) return false;
+            if (!PuedePagar(madera, oro, comida, hierro, piedra)) return false;
             Madera -= madera;
             Oro -= oro;
             Comida -= comida;
+            Hierro -= hierro;
+            Piedra -= piedra;
             return true;
         }
 
-        public void Recibir(int madera, int oro, int comida)
+        public void Recibir(int madera, int oro, int comida, int hierro = 0, int piedra = 0)
         {
             Madera += madera;
             Oro += oro;
             Comida += comida;
+            Hierro += hierro;
+            Piedra += piedra;
         }
 
         // Vista amigable de los recursos (también usa Dictionary<string,int>).
@@ -59,7 +67,9 @@ namespace Modelo
             {
                 { "Oro", Oro },
                 { "Madera", Madera },
-                { "Comida", Comida }
+                { "Comida", Comida },
+                { "Hierro", Hierro },
+                { "Piedra", Piedra }
             };
         }
 

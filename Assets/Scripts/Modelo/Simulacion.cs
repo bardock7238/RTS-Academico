@@ -203,7 +203,7 @@ namespace Modelo
                     new List<Edificio>(JugadorEnemigo.Edificios),
                     new List<Recurso>(Tablero.RecursosEnMapa),
                     new List<Item>(_itemsGlobales),
-                    JugadorLocal.Oro, JugadorLocal.Madera, JugadorLocal.Comida,
+                    JugadorLocal.Oro, JugadorLocal.Madera, JugadorLocal.Comida, JugadorLocal.Hierro, JugadorLocal.Piedra,
                     EstadoPartida.TiempoJuegoSegundos,
                     EstadoPartida.EnEjecucion,
                     EstadoPartida.GanadorNombre);
@@ -270,7 +270,7 @@ namespace Modelo
                 if (!Tablero.EsCasillaLibre(x, y, JugadorLocal, JugadorEnemigo)) return false;
 
                 EdificioConfig config = DatosDelJuego.EdificiosBase[tipo];
-                if (!JugadorLocal.Gastar(config.CostoMadera, config.CostoOro, config.CostoComida))
+                if (!JugadorLocal.Gastar(config.CostoMadera, config.CostoOro, config.CostoComida, config.CostoHierro, config.CostoPiedra))
                     return false;
 
                 Edificio nuevoEdificio = DatosDelJuego.CrearEdificio(tipo, x, y);
@@ -305,7 +305,7 @@ namespace Modelo
                 if (_entrenamientosActivos.ContainsKey(tipo)) return false; // ya hay uno en curso
 
                 UnidadConfig config = DatosDelJuego.UnidadesBase[tipo];
-                if (!JugadorLocal.Gastar(config.CostoMadera, config.CostoOro, config.CostoComida))
+                if (!JugadorLocal.Gastar(config.CostoMadera, config.CostoOro, config.CostoComida, config.CostoHierro, config.CostoPiedra))
                     return false;
 
                 CancellationTokenSource cts = new CancellationTokenSource();
@@ -501,9 +501,11 @@ namespace Modelo
         {
             switch (tipo)
             {
-                case TipoRecurso.Oro: JugadorLocal.Recibir(0, cantidad, 0); break;
-                case TipoRecurso.Madera: JugadorLocal.Recibir(cantidad, 0, 0); break;
-                case TipoRecurso.Comida: JugadorLocal.Recibir(0, 0, cantidad); break;
+                case TipoRecurso.Oro: JugadorLocal.Recibir(0, cantidad, 0, 0, 0); break;
+                case TipoRecurso.Madera: JugadorLocal.Recibir(cantidad, 0, 0, 0, 0); break;
+                case TipoRecurso.Comida: JugadorLocal.Recibir(0, 0, cantidad, 0, 0); break;
+                case TipoRecurso.Hierro: JugadorLocal.Recibir(0, 0, 0, cantidad, 0); break;
+                case TipoRecurso.Piedra: JugadorLocal.Recibir(0, 0, 0, 0, cantidad); break;
             }
         }
 
@@ -1018,7 +1020,7 @@ namespace Modelo
             }
         }
 
-        public Unidad AplicarAtaqueEnUnidadLocal(int ax, int ay, int bx, int by, int dano)
+        public Unidad AplicarAtaqueRivalAUnidad(int ax, int ay, int bx, int by, int dano)
         {
             lock (Candado)
             {
@@ -1037,7 +1039,7 @@ namespace Modelo
             }
         }
 
-        public Edificio AplicarAtaqueEnEdificioLocal(int ax, int ay, int bx, int by, int ataque)
+        public Edificio AplicarAtaqueRivalAEdificio(int ax, int ay, int bx, int by, int ataque)
         {
             lock (Candado)
             {

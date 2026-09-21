@@ -347,7 +347,7 @@ namespace Controlador
                     if (!int.TryParse(p[1], out int ax) || !int.TryParse(p[2], out int ay) ||
                         !int.TryParse(p[3], out int bx) || !int.TryParse(p[4], out int by) ||
                         !int.TryParse(p[5], out int dano)) return;
-                    Unidad objetivo = Motor.AplicarAtaqueEnUnidadLocal(ax, ay, bx, by, dano);
+                    Unidad objetivo = Motor.AplicarAtaqueRivalAUnidad(ax, ay, bx, by, dano);
                     if (objetivo != null)
                         GestorArchivos.RegistrarAccion(JugadorEnemigo.Nombre, "Red",
                             $"Rival atacó a {objetivo.Tipo} ({dano} de daño).");
@@ -398,7 +398,7 @@ namespace Controlador
                     if (!int.TryParse(p[1], out int ax) || !int.TryParse(p[2], out int ay) ||
                         !int.TryParse(p[3], out int bx) || !int.TryParse(p[4], out int by) ||
                         !int.TryParse(p[5], out int ataque)) return;
-                    Edificio objetivo = Motor.AplicarAtaqueEnEdificioLocal(ax, ay, bx, by, ataque);
+                    Edificio objetivo = Motor.AplicarAtaqueRivalAEdificio(ax, ay, bx, by, ataque);
                     if (objetivo != null)
                         GestorArchivos.RegistrarAccion(JugadorEnemigo.Nombre, "Red",
                             $"Rival atacó {objetivo.Tipo} ({ataque} de ataque).");

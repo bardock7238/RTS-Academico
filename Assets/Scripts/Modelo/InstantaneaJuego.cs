@@ -28,6 +28,8 @@ namespace Modelo
         public int Oro { get; }
         public int Madera { get; }
         public int Comida { get; }
+        public int Hierro { get; }
+        public int Piedra { get; }
         public int TiempoJuegoSegundos { get; }
         public bool EnEjecucion { get; }
         public string GanadorNombre { get; }
@@ -39,7 +41,7 @@ namespace Modelo
             List<Edificio> edificiosEnemigo,
             List<Recurso> recursos,
             List<Item> items,
-            int oro, int madera, int comida,
+            int oro, int madera, int comida, int hierro, int piedra,
             int tiempoJuegoSegundos,
             bool enEjecucion,
             string ganadorNombre)
@@ -53,6 +55,8 @@ namespace Modelo
             Oro = oro;
             Madera = madera;
             Comida = comida;
+            Hierro = hierro;
+            Piedra = piedra;
             TiempoJuegoSegundos = tiempoJuegoSegundos;
             EnEjecucion = enEjecucion;
             GanadorNombre = ganadorNombre;

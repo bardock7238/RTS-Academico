@@ -13,6 +13,8 @@ namespace Modelo
         public int CostoOro { get; set; }
         public int CostoMadera { get; set; }
         public int CostoComida { get; set; }
+        public int CostoHierro { get; set; }
+        public int CostoPiedra { get; set; }
         public int TiempoConstruccionSegundos { get; set; }
         public EstadoEdificio Estado { get; set; }
         // Unidades que este edificio puede entrenar (CentroUrbano -> Aldeano, Cuartel -> militares).

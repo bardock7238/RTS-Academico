@@ -198,14 +198,16 @@ Modelo congelado: estas se documentan y se explican, no se arreglan ("deuda téc
 
 ## PENDIENTE (siguientes pasos)
 
-0. **Modelo congelado (FROZEN, tag `modelo-1.0.0`)** — no se toca más su lógica salvo necesidad crítica de última hora.
-1. **Vista**: escena Unity con mapa/sprrites por enum, barras de vida/progreso, HUD de recursos y red (`HospedarRed`/`ConectarRed`), HUD de batalla, panel de fin de partida. El Modelo ya expone todo (enums, `Instantanea()`, `Detener()`, `ProcesarMensajesRedPendientes()`, `MensajesDescartados`). Recomendado: `ArranqueJuego` único dueño del `JuegoControlador`; `Instantanea()` llamada UNA vez por frame; `Detener()` en `OnDestroy`/`OnApplicationQuit`.
-2. **Documentación**: `AVANCE_PROYECTO.md` (este archivo), diagrama de clases UML, casos de uso, diagramas de secuencia (mover+espejo, ataque sincronizado, entrenamiento por red, spawn/pickup de item, fin de partida), mapa de concurrencia (7 Tasks + 1 hilo + 3 candados). Todo en Mermaid/PlantUML dentro de un `.md`.
-3. **Pruebas EditMode de Unity** (3 casos pedidos): concurrencia, red y victoria del lado del editor.
-4. **Evidencia de ejecución**: capturas de `configuracion.txt`, `log_partida.txt`, `resultado_final.txt` + log de una partida con dos jugadores.
-5. **README** actualizado con instrucciones de ejecución en dos máquinas.
-6. **Guion de la demo**: orden exacto de clics (evitar detener+reiniciar recolección sobre el MISMO aldeano en el mismo instante, etc.).
-7. **Opcional:** Nivel 2 de batalla (`Parallel.For`) como optimización para el informe.
+0. **Modelo congelado (FROZEN, tag `modelo-1.1.0`)** — Se descongeló temporalmente para la Revisión de la API y Nuevos Recursos (Hierro y Piedra).
+1. [x] **Diagnóstico y Plan de Trabajo:** Revisión exhaustiva completada. El código compila correctamente (PRUEBA OK y 71 OK).
+2. [x] **Revisión de la API:** Se renombraron `AplicarAtaqueEnUnidadLocal` a `AplicarAtaqueRivalAUnidad` y `AplicarAtaqueEnEdificioLocal` a `AplicarAtaqueRivalAEdificio` para mantener la simetría y la convención `Rival` de la fachada del Modelo.
+3. [x] **Nuevos Recursos (Hierro y Piedra):** Añadidos a `Tipos.cs`, `Jugador.cs`, y `InstantaneaJuego.cs`. Balance de `DatosDelJuego.cs` para usarlos en unidades y edificios. Actualizado `Simulacion.cs` (`EntregarRecurso`, `ConstruirEdificio`, `EntrenarUnidad`).
+4. [ ] **Vista**: escena Unity con mapa/sprites por enum, barras de vida/progreso, HUD de recursos y red, HUD de batalla, panel de fin de partida.
+5. [ ] **Documentación**: diagramas de secuencia actualizados.
+6. [ ] **Pruebas EditMode de Unity** (3 casos pedidos): concurrencia, red y victoria del lado del editor.
+7. [ ] **Evidencia de ejecución**: capturas de archivos txt.
+8. [ ] **README** actualizado.
+9. [ ] **Guion de la demo**.
 
 ## Instrucciones para la siguiente sesión
 
