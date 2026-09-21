@@ -226,20 +226,39 @@ namespace Modelo
         }
 
         // Distribución inicial de recursos del mapa (oro, madera, comida, hierro y piedra).
+        // Repartidos a ambos lados del mapa 30x30 (sin pisar los bases en y=1 / y=28).
         public static List<Recurso> CrearRecursosIniciales()
         {
             return new List<Recurso>
             {
-                new Recurso(TipoRecurso.Madera, 500, 3, 3),
-                new Recurso(TipoRecurso.Oro, 500, 11, 11),
-                new Recurso(TipoRecurso.Comida, 300, 7, 7),
-                new Recurso(TipoRecurso.Madera, 400, 12, 3),
-                new Recurso(TipoRecurso.Oro, 400, 3, 12),
-                new Recurso(TipoRecurso.Comida, 300, 11, 6),
-                new Recurso(TipoRecurso.Hierro, 300, 2, 8),
-                new Recurso(TipoRecurso.Hierro, 300, 12, 8),
-                new Recurso(TipoRecurso.Piedra, 300, 8, 2),
-                new Recurso(TipoRecurso.Piedra, 300, 8, 12)
+                // Zona central
+                new Recurso(TipoRecurso.Comida, 400, 15, 15),
+                new Recurso(TipoRecurso.Oro, 500, 14, 16),
+                new Recurso(TipoRecurso.Madera, 500, 16, 14),
+
+                // Cuadrante superior-izq
+                new Recurso(TipoRecurso.Madera, 500, 5, 5),
+                new Recurso(TipoRecurso.Hierro, 300, 4, 10),
+                new Recurso(TipoRecurso.Piedra, 300, 10, 4),
+
+                // Cuadrante superior-der
+                new Recurso(TipoRecurso.Oro, 500, 24, 5),
+                new Recurso(TipoRecurso.Hierro, 300, 25, 10),
+                new Recurso(TipoRecurso.Piedra, 300, 19, 4),
+
+                // Cuadrante inferior-izq
+                new Recurso(TipoRecurso.Oro, 400, 5, 24),
+                new Recurso(TipoRecurso.Hierro, 300, 4, 19),
+                new Recurso(TipoRecurso.Piedra, 300, 10, 25),
+
+                // Cuadrante inferior-der
+                new Recurso(TipoRecurso.Madera, 400, 24, 24),
+                new Recurso(TipoRecurso.Hierro, 300, 25, 19),
+                new Recurso(TipoRecurso.Piedra, 300, 19, 25),
+
+                // Comida accesible para cada base
+                new Recurso(TipoRecurso.Comida, 300, 10, 2),
+                new Recurso(TipoRecurso.Comida, 300, 20, 27)
             };
         }
 

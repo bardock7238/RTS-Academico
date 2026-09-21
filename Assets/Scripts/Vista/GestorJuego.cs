@@ -33,7 +33,7 @@ namespace Vista
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void AutoCrear()
         {
-            if (Object.FindFirstObjectByType<GestorJuego>() != null) return;
+            if (Object.FindAnyObjectByType<GestorJuego>() != null) return;
             var go = new GameObject("GestorJuego");
             go.AddComponent<GestorJuego>();
         }
@@ -124,13 +124,13 @@ namespace Vista
             if (cam != null)
             {
                 cam.orthographic = true;
-                cam.orthographicSize = 9f;
-                cam.transform.position = new Vector3(7f, 7f, -10f);
+                cam.orthographicSize = 15.5f;
+                cam.transform.position = new Vector3((Mapa.Ancho - 1) / 2f, (Mapa.Alto - 1) / 2f, -10f);
                 cam.backgroundColor = new Color(0.12f, 0.16f, 0.12f);
                 cam.clearFlags = CameraClearFlags.SolidColor;
             }
 
-            if (FindFirstObjectByType<UnityEngine.EventSystems.EventSystem>() == null)
+            if (FindAnyObjectByType<UnityEngine.EventSystems.EventSystem>() == null)
             {
                 var es = new GameObject("EventSystem",
                     typeof(UnityEngine.EventSystems.EventSystem),

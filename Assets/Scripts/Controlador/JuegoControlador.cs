@@ -55,6 +55,9 @@ namespace Controlador
             return true;
         }
 
+        // [Movimiento] Corta el caminar de una unidad (Escape / órdenes manuales).
+        public bool CancelarDestino(Unidad unidad) => Motor.CancelarDestino(unidad);
+
         // 2. Construir Edificio
         public bool ConstruirEdificio(TipoEdificio tipo, int x, int y)
         {
@@ -159,6 +162,44 @@ namespace Controlador
             if (!Motor.RecogerItem(unidad, item)) return false;
 
             EnviarPorRed($"RECOGER_ITEM;{item.Tipo};{item.PosicionX};{item.PosicionY}");
+            return true;
+        }
+
+        // [Movimiento] Viaja a recoger un item / yacimiento (el Modelo fija el destino
+        // y la unidad camina celda a celda). Si ya estaba adyacente, la acción es
+        // inmediata y ESTA capa anuncia por red (como antes); si hay viaje, el
+        // anuncio lo hace el Modelo al llegar (LlegarADestino).
+        public bool MoverARecogerItem(Unidad unidad, Item item)
+        {
+            bool adyacente = unidad != null && item != null &&
+                Math.Abs(unidad.PosicionX - item.PosicionX) <= 1 &&
+                Math.Abs(unidad.PosicionY - item.PosicionY) <= 1;
+            int origenX = unidad?.PosicionX ?? 0;
+            int origenY = unidad?.PosicionY ?? 0;
+            if (!Motor.MoverARecogerItem(unidad, item)) return false;
+
+            if (adyacente)
+                EnviarPorRed($"RECOGER_ITEM;{item.Tipo};{item.PosicionX};{item.PosicionY}");
+            else if (unidad.TieneDestino)
+                // Hay viaje: el rival camina SU copia hacia la misma casilla.
+                EnviarPorRed($"MOVER;{origenX};{origenY};{unidad.DestinoX};{unidad.DestinoY}");
+            return true;
+        }
+
+        public bool MoverARecolectar(Unidad aldeano, Recurso recurso)
+        {
+            bool adyacente = aldeano != null && recurso != null &&
+                Math.Abs(aldeano.PosicionX - recurso.PosicionX) <= 1 &&
+                Math.Abs(aldeano.PosicionY - recurso.PosicionY) <= 1;
+            int origenX = aldeano?.PosicionX ?? 0;
+            int origenY = aldeano?.PosicionY ?? 0;
+            if (!Motor.MoverARecolectar(aldeano, recurso)) return false;
+
+            if (adyacente && Motor.EstaRecolectando(aldeano))
+                EnviarPorRed($"RECOLECTAR;{aldeano.PosicionX};{aldeano.PosicionY};1");
+            else if (aldeano.TieneDestino)
+                // Hay viaje: la llegada anuncia RECOLECTAR;1 desde el Modelo.
+                EnviarPorRed($"MOVER;{origenX};{origenY};{aldeano.DestinoX};{aldeano.DestinoY}");
             return true;
         }
 

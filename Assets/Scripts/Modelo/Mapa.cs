@@ -5,8 +5,8 @@ namespace Modelo
 {
     public class Mapa
     {
-        public const int Ancho = 15;
-        public const int Alto = 15;
+        public const int Ancho = 30;
+        public const int Alto = 30;
 
         // Lista de recursos colocados en casillas del mapa
         public List<Recurso> RecursosEnMapa { get; set; }

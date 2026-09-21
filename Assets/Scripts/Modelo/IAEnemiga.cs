@@ -151,18 +151,10 @@ namespace Modelo
 
                 if (mejor == null) continue;
 
-                // Si no está adyacente, primero moverse (un paso) hacia él.
-                int dx = Math.Abs(aldeano.PosicionX - mejor.PosicionX);
-                int dy = Math.Abs(aldeano.PosicionY - mejor.PosicionY);
-                if (dx > 1 || dy > 1)
-                {
-                    int nx = aldeano.PosicionX + Math.Sign(mejor.PosicionX - aldeano.PosicionX);
-                    int ny = aldeano.PosicionY + Math.Sign(mejor.PosicionY - aldeano.PosicionY);
-                    _mundo.MoverUnidadIA(aldeano, nx, ny);
-                    continue;
-                }
-
-                _mundo.IniciarRecoleccionIA(aldeano, mejor);
+                // [Movimiento] Viaje completo: el aldeano camina solo hasta el
+                // yacimiento (MoverARecolectarIA) y la recolección arranca al llegar
+                // (LlegarADestino). Si ya está adyacente, empieza ya mismo.
+                _mundo.MoverARecolectarIA(aldeano, mejor);
             }
         }
 

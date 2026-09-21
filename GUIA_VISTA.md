@@ -332,7 +332,7 @@ public class HudBatalla : MonoBehaviour
 }
 ```
 
-### 3.4 `VistaTablero.cs` — pintar el mapa 15×15
+### 3.4 `VistaTablero.cs` — pintar el mapa 30×30
 
 ```csharp
 // Pintar unidades, edificios, recursos e items desde la instantánea.
@@ -599,7 +599,7 @@ foreach (var r in foto.Recursos)
 }
 ```
 
-**Posiciones iniciales en el mapa 15×15:**
+**Posiciones iniciales en el mapa 30×30:**
 
 | Tipo | Posición | Cantidad inicial |
 |------|----------|-----------------|
@@ -681,9 +681,9 @@ Jerarquía de escena sugerida:
 
 **Configuración de Cámara:**
 ```
-Position: (7, 7, -10)
+Position: (14.5, 14.5, -10)
 Projection: Orthographic
-Size: 9  (para ver el mapa 15×15 completo)
+Size: 15.5  (mapa 30×30 centrado)
 ```
 
 ---
@@ -693,7 +693,7 @@ Size: 9  (para ver el mapa 15×15 completo)
 - [ ] **Paso 1** — Crear la escena y el GameObject `GestorJuego` con `GestorJuego.cs`. Verificar que la partida arranca (log en Console).
 - [ ] **Paso 2** — `HudRecursos`: mostrar los 5 recursos + tiempo. Verificar que cambian al recolectar.
 - [ ] **Paso 3** — `VistaTablero`: pintar unidades y edificios con sprites de colores. Verificar posiciones del mapa.
-- [ ] **Paso 4** — `ControlInputUsuario`: mover una unidad con clic derecho. Verificar el log `Mover`.
+- [ ] **Paso 4** — `ControlInputUsuario`: mover una unidad con clic izquierdo (la unidad CAMINA hasta el destino; el clic derecho también actúa). Verificar el log `Mover`.
 - [ ] **Paso 5** — Entrenar unidades con atajos de teclado (Q/W/E/R). Verificar que aparecen tras el tiempo de espera.
 - [ ] **Paso 6** — Construir edificios (1/2/3/4). Verificar barra de progreso de construcción.
 - [ ] **Paso 7** — Items: pintarlos en el mapa y permitir recogerlos con clic.

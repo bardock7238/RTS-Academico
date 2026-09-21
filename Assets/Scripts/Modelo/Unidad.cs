@@ -10,8 +10,8 @@ namespace Modelo
         public int Ataque { get; set; }
         public int Defensa { get; set; }
         public int RangoAtaque { get; set; }      // 1 = cuerpo a cuerpo; mayor = a distancia
-        public int PosicionX { get; set; }        // Casilla X en el mapa de 15x15
-        public int PosicionY { get; set; }        // Casilla Y en el mapa de 15x15
+        public int PosicionX { get; set; }        // Casilla X del mapa
+        public int PosicionY { get; set; }        // Casilla Y del mapa
         public int CostoOro { get; set; }
         public int CostoMadera { get; set; }
         public int CostoComida { get; set; }
@@ -38,6 +38,18 @@ namespace Modelo
         // [Concurrencia/Batalla] Enfriamiento de ataque: ticks que faltan para
         // poder volver a golpear. Evita que todos peguen en cada latido.
         public int TiempoEsperaAtaque { get; set; }
+
+        // [Movimiento] Destino al que la unidad camina celda a celda (-1 = quieto).
+        public int DestinoX { get; set; } = -1;
+        public int DestinoY { get; set; } = -1;
+        public bool TieneDestino => DestinoX >= 0;
+
+        // Acción a ejecutar al llegar al destino (recoger item / iniciar recolección).
+        public Item ItemAlLlegar { get; set; }
+        public Recurso RecursoAlLlegar { get; set; }
+
+        // Ticks seguidos sin poder dar un paso (bloqueo); si pasa del límite, se cancela.
+        public int TicksBloqueoDestino { get; set; }
 
         public Unidad()
         {
@@ -77,6 +89,22 @@ namespace Modelo
         {
             PosicionX = x;
             PosicionY = y;
+        }
+
+        public void FijarDestino(int x, int y)
+        {
+            DestinoX = x;
+            DestinoY = y;
+            TicksBloqueoDestino = 0;
+        }
+
+        public void LimpiarDestino()
+        {
+            DestinoX = -1;
+            DestinoY = -1;
+            ItemAlLlegar = null;
+            RecursoAlLlegar = null;
+            TicksBloqueoDestino = 0;
         }
     }
 }

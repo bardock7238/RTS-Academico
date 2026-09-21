@@ -739,7 +739,7 @@ flowchart LR
     GJ["GestorJuego\n(único dueño del JuegoControlador)"] --> JC["JuegoControlador"]
     subgraph VISTA["Vista (Unity) — MonoBehaviour"]
         HUD["HudRecursos\n(5 recursos + tiempo + mensajes)"]
-        TILES["VistaTablero\n(rejilla 15x15 + entidades)"]
+        TILES["VistaTablero\n(rejilla 30x30 + entidades)"]
         IN["ControlInputUsuario\n(clics y teclas QWER/1-4/C/I)"]
         FIN["PanelFinPartida\n(Reintentar → LoadScene)"]
     end

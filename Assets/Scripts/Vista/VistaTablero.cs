@@ -4,7 +4,7 @@ using Modelo;
 
 namespace Vista
 {
-    // Pinta el mapa 15x15 y las entidades desde InstantaneaJuego (copia segura).
+    // Pinta el mapa y las entidades desde InstantaneaJuego (copia segura).
     // Pool de sprites: cero Instantiate/Destroy por frame. Sin lógica de negocio.
     public class VistaTablero : MonoBehaviour
     {
@@ -12,7 +12,8 @@ namespace Vista
         [SerializeField] private Sprite[] spritesUnidad;    // indice = (int)TipoUnidad
         [SerializeField] private Sprite[] spritesEdificio;  // indice = (int)TipoEdificio
         [SerializeField] private Sprite[] spritesRecurso;   // indice = (int)TipoRecurso
-        [SerializeField] private Sprite spriteItem;
+        [SerializeField] private Sprite[] spritesItem;      // indice = (int)TipoItem
+        [SerializeField] private Sprite spriteItem;         // fallback generico
         [SerializeField] private Sprite spriteTile;
 
         [Header("Layout")]
@@ -28,6 +29,12 @@ namespace Vista
         private int _ultimoSeleccionX = int.MinValue;
         private int _ultimoSeleccionY = int.MinValue;
         private bool _haySeleccion;
+
+        // [Fluidez] Ultima posicion pintada de cada unidad: el Modelo late cada
+        // 100 ms (1 celda/s) y aqui se interpola hacia la casilla destino para
+        // que el sprite DESLICE en vez de saltar de cuadro en cuadro.
+        private readonly Dictionary<Unidad, Vector3> _posSuave = new Dictionary<Unidad, Vector3>();
+        private int _podaCada;
 
         private static readonly Color[] ColoresUnidad =
         {
@@ -54,7 +61,30 @@ namespace Vista
             new Color(0.75f, 0.75f, 0.78f), // Piedra
         };
 
-        public void Inicializar(GestorJuego gestor) => _gestor = gestor;
+        public void Inicializar(GestorJuego gestor)
+        {
+            _gestor = gestor;
+            CargarArtePorCodigo();
+        }
+
+        // Sin sprites enlazados en el Inspector (issue #5): el SpriteFactory
+        // genera pixel-art temporal en memoria. Lo que este enlazado se respeta.
+        private void CargarArtePorCodigo()
+        {
+            if (ArteVacio(spritesUnidad)) spritesUnidad = SpriteFactory.Unidades();
+            if (ArteVacio(spritesEdificio)) spritesEdificio = SpriteFactory.Edificios();
+            if (ArteVacio(spritesRecurso)) spritesRecurso = SpriteFactory.Recursos();
+            if (ArteVacio(spritesItem)) spritesItem = SpriteFactory.Items();
+            if (spriteTile == null) spriteTile = SpriteFactory.Tile();
+        }
+
+        private static bool ArteVacio(Sprite[] arr)
+        {
+            if (arr == null || arr.Length == 0) return true;
+            foreach (Sprite s in arr)
+                if (s != null) return false;
+            return true;
+        }
 
         public void MarcarSeleccion(int x, int y)
         {
@@ -73,7 +103,7 @@ namespace Vista
             if (foto == null) return;
             _uso = 0;
 
-            // Rejilla 15x15: se redibuja cada frame con el pool (sin Instantiate).
+            // Rejilla: se redibuja cada frame con el pool (sin Instantiate).
             DibujarRejilla();
 
             // Recursos (debajo de unidades/edificios).
@@ -84,9 +114,13 @@ namespace Vista
                 Dibujar(r.PosicionX, r.PosicionY, SpriteDe(spritesRecurso, (int)r.Tipo, spriteItem), c, 0.85f, 0.9f);
             }
 
-            // Items
+            // Items (sprite propio por tipo; tinte blanco para no destiñir el arte).
             foreach (Item i in foto.Items)
-                Dibujar(i.PosicionX, i.PosicionY, spriteItem, Color.yellow, 0.7f, 1f);
+            {
+                Sprite sp = SpriteDe(spritesItem, (int)i.Tipo, null);
+                if (sp != null) Dibujar(i.PosicionX, i.PosicionY, sp, Color.white, 0.7f, 1f);
+                else Dibujar(i.PosicionX, i.PosicionY, spriteItem, Color.yellow, 0.7f, 1f);
+            }
 
             // Edificios enemigos y locales
             foreach (Edificio e in foto.EdificiosEnemigo)
@@ -112,10 +146,24 @@ namespace Vista
                 sr.transform.localScale = Vector3.one * (tamanoCasilla * 0.95f);
             }
 
-            // Ocultar sobrantes del pool (la rejilla ocupa [0, 225)).
+            // Ocultar sobrantes del pool (la rejilla ocupa [0, 900)).
             int rejilla = Mapa.Ancho * Mapa.Alto;
             for (int k = Mathf.Max(_uso, rejilla); k < _pool.Count; k++)
                 _pool[k].gameObject.SetActive(false);
+
+            // [Fluidez] Poda periodica de unidades que ya no existen.
+            if (_posSuave.Count > 0 && ++_podaCada >= 30)
+            {
+                _podaCada = 0;
+                var vivas = new HashSet<Unidad>();
+                foreach (Unidad u in foto.UnidadesLocal) vivas.Add(u);
+                foreach (Unidad u in foto.UnidadesEnemigo) vivas.Add(u);
+                List<Unidad> fuera = null;
+                foreach (Unidad u in _posSuave.Keys)
+                    if (!vivas.Contains(u)) { if (fuera == null) fuera = new List<Unidad>(); fuera.Add(u); }
+                if (fuera != null)
+                    foreach (Unidad u in fuera) _posSuave.Remove(u);
+            }
         }
 
         private void DibujarRejilla()
@@ -148,15 +196,32 @@ namespace Vista
         {
             Color baseC = ColoresUnidad[(int)u.Tipo];
             Color c = Color.Lerp(baseC, equipo, 0.35f);
-            Dibujar(u.PosicionX, u.PosicionY,
-                SpriteDe(spritesUnidad, (int)u.Tipo, spriteItem),
-                c, 1.15f, u.EstaViva ? 1f : 0.3f);
+
+            // [Fluidez] Interpola entre latidos del Modelo (1 celda/100 ms = 10
+            // celdas/s): el sprite se desliza en vez de teletransportarse.
+            Vector3 meta = PosMundo(u.PosicionX, u.PosicionY);
+            Vector3 pos;
+            if (!_posSuave.TryGetValue(u, out pos))
+            {
+                pos = meta; // unidad nueva: aparece ya en su casilla
+            }
+            else
+            {
+                if ((pos - meta).sqrMagnitude > 9f) pos = meta; // resincroniza saltos raros
+                pos = Vector3.MoveTowards(pos, meta, 10f * tamanoCasilla * Time.deltaTime);
+            }
+            _posSuave[u] = pos;
+
+            Dibujar(pos, SpriteDe(spritesUnidad, (int)u.Tipo, spriteItem), c, 1.15f, u.EstaViva ? 1f : 0.3f);
         }
 
-        private void Dibujar(int x, int y, Sprite sp, Color color, float escala, float alfa)
+        private void Dibujar(int x, int y, Sprite sp, Color color, float escala, float alfa) =>
+            Dibujar(PosMundo(x, y), sp, color, escala, alfa);
+
+        private void Dibujar(Vector3 pos, Sprite sp, Color color, float escala, float alfa)
         {
             var sr = Obtener();
-            sr.transform.position = PosMundo(x, y) + new Vector3(0, 0, -0.05f);
+            sr.transform.position = pos + new Vector3(0, 0, -0.05f);
             sr.sprite = sp != null ? sp : ObtenerSpriteBlanco();
             sr.color = new Color(color.r, color.g, color.b, alfa);
             sr.sortingOrder = 10;

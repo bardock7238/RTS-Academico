@@ -59,7 +59,7 @@ namespace Vista
             _construido = true;
             if (panel != null) return;
 
-            var canvas = FindFirstObjectByType<Canvas>();
+            var canvas = FindAnyObjectByType<Canvas>();
             if (canvas == null)
             {
                 var canvasGo = new GameObject("CanvasFin", typeof(Canvas), typeof(UnityEngine.UI.CanvasScaler), typeof(UnityEngine.UI.GraphicRaycaster));

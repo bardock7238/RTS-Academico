@@ -8,8 +8,8 @@ namespace Modelo
         public TipoEdificio Tipo { get; set; }
         public int VidaMaxima { get; set; }
         public int Vida { get; set; }
-        public int PosicionX { get; set; }        // Casilla X en el mapa de 15x15
-        public int PosicionY { get; set; }        // Casilla Y en el mapa de 15x15
+        public int PosicionX { get; set; }        // Casilla X del mapa
+        public int PosicionY { get; set; }        // Casilla Y del mapa
         public int CostoOro { get; set; }
         public int CostoMadera { get; set; }
         public int CostoComida { get; set; }

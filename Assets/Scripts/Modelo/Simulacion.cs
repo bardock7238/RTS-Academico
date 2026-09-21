@@ -106,7 +106,9 @@ namespace Modelo
         // Cada cuántos ms late el reloj (1000 = 1 segundo real).
         public int RelojTickMs { get; set; } = 1000;
         // Cada cuántos ms siembra el spawner un item (host).
-        public int IntervaloSpawnerMs { get; set; } = 3000;
+        public int IntervaloSpawnerMs { get; set; } = 15000;
+        // Máximo de items simultáneos en el mapa (evita la lluvia de cuadros amarillos).
+        public int MaxItemsEnMapa { get; set; } = 8;
         // [PVE] Cada cuántos ms decide la IA enemiga (las pruebas lo bajan).
         public int IntervaloIaMs { get; set; } = 2000;
         // Cuántos SEGUNDOS dura el Casco antes de que su Task lo apague.
@@ -174,18 +176,19 @@ namespace Modelo
             // Cada instancia coloca a SU jugador en su lado. El host (localArriba = true)
             // vive arriba; el cliente (localArriba = false) vive abajo. Así las copias
             // de ambos mundos concuerdan y la red puede espejar movimientos por casilla.
-            int centroLocalY = localArriba ? 1 : 13;
-            int centroEnemigoY = localArriba ? 13 : 1;
-            int aldeanoLocalY = localArriba ? 1 : 13;
-            int aldeanoEnemigoY = localArriba ? 13 : 1;
+            int centroX = Mapa.Ancho / 2;
+            int centroLocalY = localArriba ? 1 : Mapa.Alto - 2;
+            int centroEnemigoY = localArriba ? Mapa.Alto - 2 : 1;
+            int aldeanoLocalY = centroLocalY;
+            int aldeanoEnemigoY = centroEnemigoY;
 
-            Edificio centroLocal = DatosDelJuego.CrearCentroUrbano(7, centroLocalY);
-            Edificio centroEnemigo = DatosDelJuego.CrearCentroUrbano(7, centroEnemigoY);
+            Edificio centroLocal = DatosDelJuego.CrearCentroUrbano(centroX, centroLocalY);
+            Edificio centroEnemigo = DatosDelJuego.CrearCentroUrbano(centroX, centroEnemigoY);
             JugadorLocal.AgregarEdificio(centroLocal);
             JugadorEnemigo.AgregarEdificio(centroEnemigo);
 
-            JugadorLocal.AgregarUnidad(DatosDelJuego.CrearUnidad(TipoUnidad.Aldeano, 6, aldeanoLocalY));
-            JugadorEnemigo.AgregarUnidad(DatosDelJuego.CrearUnidad(TipoUnidad.Aldeano, 6, aldeanoEnemigoY));
+            JugadorLocal.AgregarUnidad(DatosDelJuego.CrearUnidad(TipoUnidad.Aldeano, centroX - 1, aldeanoLocalY));
+            JugadorEnemigo.AgregarUnidad(DatosDelJuego.CrearUnidad(TipoUnidad.Aldeano, centroX - 1, aldeanoEnemigoY));
 
             GestorArchivos.GuardarConfiguracionInicial(
                 $"Jugador: {nombreJugador} | Mapa: {Mapa.Ancho}x{Mapa.Alto} | " +
@@ -279,16 +282,97 @@ namespace Modelo
                 if (unidad == null) return false;
                 if (!dueno.Unidades.Contains(unidad)) return false;
                 if (!Tablero.EsCoordenadaValida(nuevoX, nuevoY)) return false;
-                if (!Tablero.EsCasillaLibre(nuevoX, nuevoY, JugadorLocal, JugadorEnemigo)) return false;
 
                 int origenX = unidad.PosicionX;
                 int origenY = unidad.PosicionY;
-                unidad.MoverA(nuevoX, nuevoY);
+
+                // Ya está en la casilla pedida: no hay nada que caminar.
+                if (origenX == nuevoX && origenY == nuevoY) return true;
+                if (!Tablero.EsCasillaLibre(nuevoX, nuevoY, JugadorLocal, JugadorEnemigo)) return false;
+
+                // Nueva orden de movimiento: corta el viaje anterior y la recolección.
+                CortarRecoleccionYAnunciar(unidad, dueno);
+                unidad.LimpiarDestino();
+                unidad.FijarDestino(nuevoX, nuevoY);
+                unidad.Estado = EstadoUnidad.Moviendo;
 
                 GestorArchivos.RegistrarAccion(
                     dueno.Nombre,
                     "Mover",
-                    $"{unidad.Tipo} de ({origenX},{origenY}) a ({nuevoX},{nuevoY})");
+                    $"{unidad.Tipo} de ({origenX},{origenY}) camina a ({nuevoX},{nuevoY})");
+                return true;
+            }
+        }
+
+        // [Movimiento/API] Corta la recolección en marcha (si la hay) y, si era del
+        // jugador local, anuncia por red para que la copia rival deje de mostrar
+        // "Recolectando" mientras la unidad camina a otro lado.
+        private void CortarRecoleccionYAnunciar(Unidad unidad, Jugador dueno)
+        {
+            if (DetenerRecoleccion(unidad) && dueno == JugadorLocal)
+                Transmitir($"RECOLECTAR;{unidad.PosicionX};{unidad.PosicionY};0");
+        }
+
+        // [Movimiento] Detiene el caminar de una unidad (y la acción pendiente al
+        // llegar). Escape / órdenes manuales del jugador; también usable en pruebas.
+        public bool CancelarDestino(Unidad unidad)
+        {
+            lock (Candado)
+            {
+                if (unidad == null) return false;
+                if (!unidad.TieneDestino && unidad.ItemAlLlegar == null && unidad.RecursoAlLlegar == null)
+                    return false;
+                unidad.LimpiarDestino();
+                if (unidad.Estado == EstadoUnidad.Moviendo) unidad.Estado = EstadoUnidad.Idle;
+                GestorArchivos.RegistrarAccion(JugadorLocal.Nombre, "Mover",
+                    $"Viaje de {unidad.Tipo} cancelado en ({unidad.PosicionX},{unidad.PosicionY}).");
+                return true;
+            }
+        }
+
+        // [Movimiento] El aldeano camina hacia un yacimiento: si ya está adyacente
+        // inicia la recolección ya; si no, fija el destino a una casilla junto al
+        // recurso y la inicia al llegar (ver LlegarADestino).
+        public bool MoverARecolectar(Unidad aldeano, Recurso recurso) =>
+            MoverARecolectarPara(aldeano, recurso, JugadorLocal);
+
+        // [PVE/IA] El aldeano de la IA viaja SOLO hasta el yacimiento (en vez de
+        // dar un paso cada 2 s): el bucle lo camina celda a celda y al llegar
+        // LlegarADestino lanza la recolección.
+        public bool MoverARecolectarIA(Unidad aldeano, Recurso recurso) =>
+            MoverARecolectarPara(aldeano, recurso, JugadorEnemigo);
+
+        private bool MoverARecolectarPara(Unidad aldeano, Recurso recurso, Jugador dueno)
+        {
+            lock (Candado)
+            {
+                if (_detenido || aldeano == null || recurso == null || !EstadoPartida.EnEjecucion) return false;
+                if (!dueno.Unidades.Contains(aldeano)) return false;
+                if (!aldeano.EsRecolector || !aldeano.EstaViva) return false;
+                if (recurso.EstaAgotado || !Tablero.RecursosEnMapa.Contains(recurso)) return false;
+
+                if (EstanAdyacentes(aldeano, recurso))
+                {
+                    aldeano.LimpiarDestino(); // nueva orden: corta cualquier viaje previo
+                    return IniciarRecoleccionPara(aldeano, recurso, dueno);
+                }
+
+                // El yacimiento está ocupado (casilla del recurso): el destino es la
+                // casilla libre junto a él más cercana al aldeano.
+                (int X, int Y)? casilla = CasillaLibreJuntoA(
+                    recurso.PosicionX, recurso.PosicionY, aldeano);
+                if (!casilla.HasValue) return false;
+
+                CortarRecoleccionYAnunciar(aldeano, dueno);
+                aldeano.LimpiarDestino();
+                aldeano.FijarDestino(casilla.Value.X, casilla.Value.Y);
+                aldeano.RecursoAlLlegar = recurso;
+                aldeano.Estado = EstadoUnidad.Moviendo;
+
+                GestorArchivos.RegistrarAccion(
+                    dueno.Nombre,
+                    "Recolectar",
+                    $"{aldeano.Tipo} camina a ({casilla.Value.X},{casilla.Value.Y}) hacia {recurso.Tipo}.");
                 return true;
             }
         }
@@ -592,6 +676,7 @@ namespace Modelo
                               + Math.Abs(atacante.PosicionY - enemigo.PosicionY);
                 if (distancia > atacante.RangoAtaque) return false; // fuera de alcance
 
+                atacante.LimpiarDestino(); // orden de combate: corta cualquier viaje
                 atacante.Estado = EstadoUnidad.Atacando;
 
                 // [Items] Ataque con posible Espada (AtaqueTotal) y defensa con el
@@ -638,6 +723,7 @@ namespace Modelo
                               + Math.Abs(atacante.PosicionY - edificioEnemigo.PosicionY);
                 if (distancia > atacante.RangoAtaque) return false;
 
+                atacante.LimpiarDestino(); // orden de combate: corta cualquier viaje
                 atacante.Estado = EstadoUnidad.Atacando;
                 // [Items] El ataque suma la Espada (AtaqueTotal) si va equipada.
                 edificioEnemigo.RecibirDano(atacante.AtaqueTotal);
@@ -709,6 +795,7 @@ namespace Modelo
                 lock (Candado)
                 {
                     if (!EstadoPartida.EnEjecucion) continue;
+                    if (_itemsGlobales.Count >= MaxItemsEnMapa) continue;
                     (int X, int Y)? casilla = ElegirCasillaLibreParaItem();
                     if (!casilla.HasValue) continue; // sin hueco, se espera al próximo latido
                     TipoItem tipo = (TipoItem)_rng.Next(0, 4); // uno de los 4 al azar
@@ -773,6 +860,53 @@ namespace Modelo
 
                 GestorArchivos.RegistrarAccion(dueno.Nombre, "Item",
                     $"{unidad.Tipo} recogió {DatosDelJuego.NombreDe(item.Tipo)} en ({item.PosicionX},{item.PosicionY}).");
+                return true;
+            }
+        }
+
+        // [Movimiento] La unidad camina a recoger un item: si ya está adyacente lo
+        // recoge ya; si no, fija el destino (la casilla del item, o una libre a su
+        // lado) y lo recoge al llegar (ver LlegarADestino).
+        public bool MoverARecogerItem(Unidad unidad, Item item)
+        {
+            lock (Candado)
+            {
+                if (_detenido || unidad == null || item == null || !EstadoPartida.EnEjecucion) return false;
+                if (!JugadorLocal.Unidades.Contains(unidad)) return false;
+                if (!unidad.EstaViva) return false;
+                if (item.Recogido || !_itemsGlobales.Contains(item)) return false;
+
+                int dx = Math.Abs(unidad.PosicionX - item.PosicionX);
+                int dy = Math.Abs(unidad.PosicionY - item.PosicionY);
+                if (dx <= 1 && dy <= 1)
+                {
+                    unidad.LimpiarDestino(); // nueva orden: corta cualquier viaje previo
+                    return RecogerItem(unidad, item);
+                }
+
+                // Destino preferente: la casilla del item; si está ocupada, una libre a su lado.
+                (int X, int Y)? casilla = null;
+                if (Tablero.EsCoordenadaValida(item.PosicionX, item.PosicionY) &&
+                    Tablero.EsCasillaLibre(item.PosicionX, item.PosicionY, JugadorLocal, JugadorEnemigo))
+                {
+                    casilla = (item.PosicionX, item.PosicionY);
+                }
+                else
+                {
+                    casilla = CasillaLibreJuntoA(item.PosicionX, item.PosicionY, unidad);
+                }
+                if (!casilla.HasValue) return false;
+
+                CortarRecoleccionYAnunciar(unidad, JugadorLocal);
+                unidad.LimpiarDestino();
+                unidad.FijarDestino(casilla.Value.X, casilla.Value.Y);
+                unidad.ItemAlLlegar = item;
+                unidad.Estado = EstadoUnidad.Moviendo;
+
+                GestorArchivos.RegistrarAccion(
+                    JugadorLocal.Nombre,
+                    "Item",
+                    $"{unidad.Tipo} camina a ({casilla.Value.X},{casilla.Value.Y}) a recoger {DatosDelJuego.NombreDe(item.Tipo)}.");
                 return true;
             }
         }
@@ -926,8 +1060,9 @@ namespace Modelo
             return null;
         }
 
-        // [Concurrencia] Bucle de fondo de la batalla. Late siempre, pero solo
-        // trabaja si IniciarBatalla() encendió BucleActivo y la partida sigue viva.
+        // [Concurrencia] Bucle de fondo de la batalla. Late siempre: avanza los
+        // destinos (movimiento caminando) con o sin batalla; el combate solo corre
+        // si IniciarBatalla()/IniciarIA() encendió BucleActivo.
         private async Task IniciarBucleSimulacionAsync()
         {
             while (!_ctsSimulacion.IsCancellationRequested)
@@ -935,15 +1070,167 @@ namespace Modelo
                 try { await Task.Delay(TickSimulacionMs, _ctsSimulacion.Token); }
                 catch (TaskCanceledException) { break; } // Cancelado (fin de partida/aplicación).
 
-                if (!BucleActivo) continue;
-
                 bool enEjecucion;
                 lock (Candado) { enEjecucion = EstadoPartida.EnEjecucion; }
+
+                // Los destinos avanzan SIEMPRE que la partida siga viva (nadie se
+                // teletransporta: cada latido las unidades dan UN paso celda a celda).
+                if (enEjecucion) AvanzarDestinos();
+
+                if (!BucleActivo) continue;
                 if (!enEjecucion) { BucleActivo = false; break; }
 
                 ResolverTick();
                 TicksSimulados++;
             }
+        }
+
+        // [Movimiento] Cada latido, TODAS las unidades con destino dan un paso hacia
+        // su casilla objetivo. Al llegar se ejecuta la acción pendiente (item o
+        // yacimiento); si está bloqueada ~50 latidos, se rinde y cancela el viaje.
+        private void AvanzarDestinos()
+        {
+            lock (Candado)
+            {
+                AvanzarDestinosDe(JugadorLocal);
+                AvanzarDestinosDe(JugadorEnemigo);
+            }
+        }
+
+        private void AvanzarDestinosDe(Jugador dueno)
+        {
+            // Por índice: la lista puede cambiar si una unidad muere en este latido.
+            for (int i = 0; i < dueno.Unidades.Count; i++)
+            {
+                Unidad u = dueno.Unidades[i];
+                if (u == null || !u.EstaViva || !u.TieneDestino) continue;
+
+                if (u.PosicionX == u.DestinoX && u.PosicionY == u.DestinoY)
+                {
+                    LlegarADestino(u, dueno);
+                    continue;
+                }
+
+                // [Movimiento] BFS: el paso de HOY sale del camino real hacia el
+                // destino (esquiva unidades y edificios). Sin camino transitable
+                // este latido → se acumula el contador de bloqueo.
+                (int X, int Y)? siguiente = SiguientePasoBFS(u, u.DestinoX, u.DestinoY);
+                bool dioPaso = siguiente.HasValue && IntentarPasoA(u, siguiente.Value.X, siguiente.Value.Y);
+
+                if (dioPaso)
+                {
+                    u.TicksBloqueoDestino = 0;
+                    u.Estado = EstadoUnidad.Moviendo;
+                    if (u.PosicionX == u.DestinoX && u.PosicionY == u.DestinoY)
+                        LlegarADestino(u, dueno);
+                }
+                else
+                {
+                    // Camino tapado: si tarda demasiado, cancela el viaje (el
+                    // pendiente se pierde, como en un RTS normal).
+                    u.TicksBloqueoDestino++;
+                    if (u.TicksBloqueoDestino > 50)
+                    {
+                        u.LimpiarDestino();
+                        if (u.Estado == EstadoUnidad.Moviendo) u.Estado = EstadoUnidad.Idle;
+                    }
+                }
+            }
+        }
+
+        // Da un paso de UNA casilla hacia (x,y) si esa casilla es válida y libre.
+        private bool IntentarPasoA(Unidad u, int x, int y)
+        {
+            if (x == u.PosicionX && y == u.PosicionY) return false;
+            if (!Tablero.EsCoordenadaValida(x, y)) return false;
+            if (!Tablero.EsCasillaLibre(x, y, JugadorLocal, JugadorEnemigo)) return false;
+            u.MoverA(x, y);
+            return true;
+        }
+
+        // [Movimiento] BFS 4-direcciones: casilla siguiente del camino real desde
+        // la unidad hasta (metaX,metaY), esquivando unidades y edificios (los
+        // yacimientos se pueden cruzar, igual que siempre permitió MoverUnidad).
+        // null = destino no transitable ahora (ocupado) o sin camino.
+        private (int X, int Y)? SiguientePasoBFS(Unidad u, int metaX, int metaY)
+        {
+            int w = Mapa.Ancho, h = Mapa.Alto;
+            if (!Tablero.EsCoordenadaValida(metaX, metaY)) return null;
+            if (!Tablero.EsCasillaLibre(metaX, metaY, JugadorLocal, JugadorEnemigo)) return null;
+
+            int inicio = u.PosicionY * w + u.PosicionX;
+            int meta = metaY * w + metaX;
+            if (inicio == meta) return null;
+
+            var padre = new int[w * h];          // -1 = libre, -2 = inicio
+            for (int i = 0; i < padre.Length; i++) padre[i] = -1;
+            padre[inicio] = -2;
+
+            var cola = new Queue<int>();
+            cola.Enqueue(inicio);
+
+            bool encontrado = false;
+            while (cola.Count > 0 && !encontrado)
+            {
+                int cur = cola.Dequeue();
+                int cx = cur % w, cy = cur / w;
+
+                ExplorarVecino(cx + 1, cy, cur);
+                ExplorarVecino(cx - 1, cy, cur);
+                ExplorarVecino(cx, cy + 1, cur);
+                ExplorarVecino(cx, cy - 1, cur);
+
+                void ExplorarVecino(int nx, int ny, int desde)
+                {
+                    if (nx < 0 || ny < 0 || nx >= w || ny >= h) return;
+                    int idx = ny * w + nx;
+                    if (idx == meta) { padre[idx] = desde; encontrado = true; return; }
+                    if (padre[idx] != -1) return;
+                    if (!Tablero.EsCasillaLibre(nx, ny, JugadorLocal, JugadorEnemigo)) return;
+                    padre[idx] = desde;
+                    cola.Enqueue(idx);
+                }
+            }
+
+            if (!encontrado) return null;
+
+            // Retroceso meta → hijo del inicio: ese hijo es el primer paso.
+            int p = meta;
+            int guard = 0;
+            while (padre[p] != inicio && guard++ < w * h) p = padre[p];
+            return (p % w, p / w);
+        }
+
+        // La unidad llegó a su destino: ejecuta la acción pendiente y se queda quieta.
+        private void LlegarADestino(Unidad u, Jugador dueno)
+        {
+            Item item = u.ItemAlLlegar;
+            Recurso recurso = u.RecursoAlLlegar;
+            u.LimpiarDestino(); // primero limpia (también los pendientes)
+
+            if (item != null)
+            {
+                // El viaje lo ordenó SIEMPRE el jugador local (MoverARecogerItem).
+                if (dueno == JugadorLocal && RecogerItem(u, item))
+                {
+                    // Anuncia por red en el MISMO punto en que lo hacía el Controlador
+                    // en el camino corto (la recogida ya ocurrió aquí, en background).
+                    Transmitir($"RECOGER_ITEM;{item.Tipo};{item.PosicionX};{item.PosicionY}");
+                }
+                if (u.Estado == EstadoUnidad.Moviendo) u.Estado = EstadoUnidad.Idle;
+                return;
+            }
+
+            if (recurso != null)
+            {
+                if (IniciarRecoleccionPara(u, recurso, dueno) && dueno == JugadorLocal)
+                {
+                    Transmitir($"RECOLECTAR;{u.PosicionX};{u.PosicionY};1");
+                }
+                return; // IniciarRecoleccionPara puso Recolectando (o seguía Idle si falló)
+            }
+
+            if (u.Estado == EstadoUnidad.Moviendo) u.Estado = EstadoUnidad.Idle;
         }
 
         // Un latido del mundo: avanzar TODAS las unidades de IA y aplicar los golpes.
@@ -1058,6 +1345,25 @@ namespace Modelo
                     $"Latido {TicksSimulados}: bajas local {bajasLocal}, enemigo {bajasEnemigo}.");
 
             VerificarGanador();
+            VerificarFinBatalla();
+        }
+
+        // [Batalla] Empate técnico del modo batalla: si ya no queda NADIE que
+        // pueda pelear en ningún bando (solo civiles), el bucle se apaga en vez
+        // de latir para siempre. Con IA activa NO se apaga: la máquina repone
+        // ejército y la partida continúa.
+        private void VerificarFinBatalla()
+        {
+            if (!BucleActivo || _ia != null || !EstadoPartida.EnEjecucion) return;
+
+            bool quedaCombatiente =
+                JugadorLocal.Unidades.Any(u => u.EstaViva && u.ControladaPorIA) ||
+                JugadorEnemigo.Unidades.Any(u => u.EstaViva && u.ControladaPorIA);
+            if (quedaCombatiente) return;
+
+            BucleActivo = false;
+            GestorArchivos.RegistrarAccion(JugadorLocal.Nombre, "Batalla",
+                "Sin combatientes vivos en ningún bando: empate técnico, bucle apagado.");
         }
 
         // ESPEJO DE LA RED (el motor refleja la copia del rival)
@@ -1083,7 +1389,12 @@ namespace Modelo
                 // que movió a su unidad, se la mueve (solo se protege el mapa).
                 if (!Tablero.EsCoordenadaValida(nuevoX, nuevoY)) return null;
 
-                unidad.MoverA(nuevoX, nuevoY);
+                // [Movimiento] Como el local: fija el destino y camina celda a celda
+                // (ambas máquinas recorren el mismo trayecto sincronizadas por latido).
+                unidad.LimpiarDestino();
+                if (unidad.PosicionX == nuevoX && unidad.PosicionY == nuevoY) return unidad;
+                unidad.FijarDestino(nuevoX, nuevoY);
+                unidad.Estado = EstadoUnidad.Moviendo;
                 return unidad;
             }
         }
@@ -1207,6 +1518,27 @@ namespace Modelo
             int dx = Math.Abs(unidad.PosicionX - recurso.PosicionX);
             int dy = Math.Abs(unidad.PosicionY - recurso.PosicionY);
             return dx <= 1 && dy <= 1;
+        }
+
+        // [Movimiento] Casilla libre en las 8 adyacentes a (x,y), la más cercana a
+        // la unidad "respecto" (si no hay ninguna libre, null).
+        private (int X, int Y)? CasillaLibreJuntoA(int x, int y, Unidad respecto)
+        {
+            int mejorX = -1, mejorY = -1, mejorD = int.MaxValue;
+            for (int dx = -1; dx <= 1; dx++)
+            {
+                for (int dy = -1; dy <= 1; dy++)
+                {
+                    if (dx == 0 && dy == 0) continue;
+                    int nx = x + dx, ny = y + dy;
+                    if (!Tablero.EsCoordenadaValida(nx, ny)) continue;
+                    if (Tablero.CasillaTieneRecurso(nx, ny)) continue;
+                    if (!Tablero.EsCasillaLibre(nx, ny, JugadorLocal, JugadorEnemigo)) continue;
+                    int d = Math.Abs(nx - respecto.PosicionX) + Math.Abs(ny - respecto.PosicionY);
+                    if (d < mejorD) { mejorD = d; mejorX = nx; mejorY = ny; }
+                }
+            }
+            return mejorX < 0 ? ((int X, int Y)?)null : (mejorX, mejorY);
         }
 
         // Busca la casilla libre más cercana a un edificio (de ahí "sale" la unidad entrenada).

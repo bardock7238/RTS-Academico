@@ -53,14 +53,37 @@ IA económica+militar, Controlador mantiene API, arte a cargo del compañero):
 - **Controlador**: fachada `IniciarIA()` / `IAActiva`; `EnviarPorRed` sale temprano si `RedPartida == null` (drena cola sin red; evita fuga).
 - **Vista (5 scripts, MVC estricto)**:
   - `GestorJuego`: raíz con `RuntimeInitializeOnLoadMethod`, `ConstruirUiSiFalta` (cámara → EventSystem → tablero → canvas/HUD → input → panel fin), expone `VistaTablero`.
-  - `VistaTablero`: pool de sprites, rejilla 15×15 redibujada cada frame (bug de slots corregido), campos `[SerializeField] Sprite[]` para el arte del compañero (issues #4–#9).
+  - `VistaTablero`: pool de sprites, rejilla 30×30 redibujada cada frame (bug de slots corregido), campos `[SerializeField] Sprite[]` para el arte del compañero (issues #4–#9).
   - `HudRecursos`: HUD de 5 recursos + tiempo + mensajes; fallback de Canvas corregido.
   - `ControlInputUsuario`: clics y teclas QWER / 1-4 / **I** (`RecogerItemCercano`) / Esc → API del Controlador.
   - `PanelFinPartida`: modal de fin + Reintentar (`LoadScene`; `Detener()` solo en `OnDestroy` del Gestor).
-- **Escena**: `Assets/Escenas/Juego.unity` (cámara ortográfica pos (7,7,-10) size 9 + placeholder); registrada en `ProjectSettings/EditorBuildSettings.asset`.
+- **Escena**: `Assets/Escenas/Juego.unity` (cámara ortográfica centrada en el mapa, size 15.5 + placeholder); registrada en `ProjectSettings/EditorBuildSettings.asset`.
 - **Verificación**: Unity batch sin `error CS` (`Exiting batchmode successfully`); suites de escritorio **rts-pve-test 18 OK** y **rts-red-test 8 OK, 0 fallos**.
 - **Issues para el compañero**: **#4–#9** (label `vista`).
 - **Docs/diagramas**: `DOCUMENTACION.md` sincronizado (clase `IAEnemiga`, API PVE, clases Vista, secuencia 3.6, concurrencia 8 Tasks, casos de uso PVE); `README.md` actualizado (PVE + controles).
+
+### MOVIMIENTO CAMINANDO + SPRITES + PULIDO (21-sep, tarde — sesión de juego)
+
+Feedback del usuario jugando en el Editor (nada de teletransportar, mapa grande,
+todo con clic izquierdo, ítems con clic) + permiso total para pulir Modelo/API
+y añadir arte temporal:
+
+- **MOVIMIENTO CON DESTINO (nadie se teletransporta)**:
+  - `Unidad`: campos `DestinoX/DestinoY`, `ItemAlLlegar`, `RecursoAlLlegar`, `TicksBloqueoDestino` + métodos `FijarDestino`/`LimpiarDestino`.
+  - `MoverUnidadPara` fija el destino (valida coordenada + casilla libre) y la unidad **CAMINA 1 casilla por latido** (100 ms) vía `AvanzarDestinos()` dentro del bucle de simulación — corre SIEMPRE que la partida esté viva, con o sin batalla.
+  - **Pathfinding BFS 4 direcciones** (`SiguientePasoBFS`): esquiva unidades y edificios (p. ej. rodear el Centro Urbano en la fila 1); sin camino transitable → contador de bloqueo y cancelación del viaje a los ~50 latidos.
+  - **Viajes con acción al llegar**: `MoverARecogerItem` (recoge el ítem solo al llegar) y `MoverARecolectar`/`MoverARecolectarIA` (lanza la recolección al llegar a una casilla libre junto al yacimiento). `LlegarADestino` ejecuta el pendiente y anuncia por red (`RECOGER_ITEM;…` / `RECOLECTAR;…;1`).
+  - `CancelarDestino` (API del Modelo + Controlador; 1.ª tecla Escape corta el viaje y mantiene la selección). Las órdenes de ataque/caminar cortan viajes y recolecciones en curso (anunciando `RECOLECTAR;…;0` si hace falta).
+  - **Espejo de red**: `MoverUnidadRival` también fija destino → AMBAS copias caminan al mismo ritmo; los viajes a ítem/yacimiento anuncian `MOVER` al salir para que el rival camine su copia.
+  - **IA puleada**: `MoverARecolectarIA` — el aldeano enemigo viaja SOLO hasta el yacimiento (antes daba 1 paso cada 2 s en mapas grandes).
+  - **Empate técnico** (`VerificarFinBatalla`): si el modo batalla se queda sin NINGÚN combatiente vivo en ambos bandos (p. ej. 6v6 simétricos que se exterminan y solo quedan aldeanos), el bucle se apaga en vez de latir para siempre; con IA activa no se apaga (la máquina repone).
+- **API NUEVA (Controlador)**: `MoverARecogerItem`, `MoverARecolectar`, `CancelarDestino`.
+- **VISTA (solo lo autorizado: sprites + fluidez)**:
+  - **`Vista/SpriteFactory.cs` (nuevo)**: pixel-art 16×16 **generado por código** — 4 unidades (aldeano/soldado/arquero/caballero), 4 edificios, 5 recursos, 4 ítems y tile — como arte TEMPORAL hasta que el compañero aporte el definitivo (issues #4–#9); cualquier sprite enlazado en el Inspector se respeta.
+  - `VistaTablero`: carga automática del arte si los slots están vacíos; ítems con **sprite por tipo** (tinte blanco para no destiñir el arte); **suavizado de movimiento** (interpolación `MoveTowards` a 10 celdas/s entre latidos → el sprite se desliza, no salta) + poda de unidades ya desaparecidas.
+  - Cámara: ortográfica size **15.5** centrada en el mapa 30×30.
+- **Mapa 30×30 + ~17 yacimientos** (4 cuadrantes + central), spawner de ítems cada 15 s con `MaxItemsEnMapa = 8`, controles unificados a **clic izquierdo** (el derecho también actúa), botón `Item [I]` en la barra (1040 px).
+- **Verificación**: compilación COMPLETA (Modelo+Controlador+Vista) contra las DLLs de Unity 6000.6.0f1 → **0 errores, 0 avisos**; suites de escritorio **rts-pve-test 23 OK, 0 fallos** (incluye: caminar rodeando obstáculos, no teletransporta, cancelar viaje, recoger ítem al llegar, recolección por viaje, empate de batalla) y **rts-red-test 8 OK, 0 fallos**.
 
 ### REVISIÓN EXTERNA + ARREGLOS DE ROBUSTEZ (19-sep) — Modelo FROZEN
 
@@ -109,7 +132,7 @@ Arreglos aplicados y verificados (Unity compila en batch; validación de escrito
 - **Modelo POCO** completo en `Assets/Scripts/Modelo/`:
   - `Tipos.cs` — enums: `TipoUnidad`, `TipoEdificio`, `TipoRecurso`, `TipoItem`, `EstadoUnidad`, `EstadoEdificio`.
   - `DatosDelJuego.cs` — catálogo central de costos/estadísticas + fábricas (`CrearUnidad`, `CrearEdificio`, `CrearRecursosIniciales`, `CrearCentroUrbano`); constantes de items (Yogur/Casco/Espada/Herramientas).
-  - `Unidad.cs`, `Edificio.cs`, `Recurso.cs`, `Item.cs`, `Jugador.cs`, `Mapa.cs` (15x15, validación de casillas), `Partida.cs` (tiempo real y ganador, **SIN turnos**).
+  - `Unidad.cs`, `Edificio.cs`, `Recurso.cs`, `Item.cs`, `Jugador.cs`, `Mapa.cs` (30x30, validación de casillas), `Partida.cs` (tiempo real y ganador, **SIN turnos**).
 - **Controlador** en `Assets/Scripts/Controlador/`:
   - `JuegoControlador.cs` — constructor **con parámetro `bool localArriba = true`**: el host vive arriba (centro (7,1), aldeano (6,1)) y el cliente (`localArriba:false`) vive abajo (centro (7,13), aldeano (6,13)). Así **las copias de ambos mundos concuerdan** y la red espeja por casilla.
   - Ataque valida **rango** y usa la defensa del modelo; construcción con costos del catálogo.
@@ -167,11 +190,11 @@ Se validó fuera de Unity (los scripts no usan `UnityEngine`), en proyectos temp
 
 ## Reglas del juego implementadas (resumen)
 
-1. Inicio: jugador con 100 de cada recurso; Mapa 15x15 con 10 yacimientos (6 originales + 2 de Hierro + 2 de Piedra).
+1. Inicio: jugador con 100 de cada recurso; Mapa 30x30 con ~17 yacimientos repartidos en 4 cuadrantes + zona central.
 2. Construir: valida coordenada, casilla libre (ambos jugadores), sin yacimiento, y costo del catálogo.
 3. Entrenar: edificio debe estar `Operativo` y poder entrenar ese tipo → paga → espera (Task) → unidad aparece junto al edificio.
 4. Recolectar: aldeano adyacente al yacimiento → suma por ciclo en segundo plano.
-5. Mover: destino dentro del mapa y casilla libre.
+5. Mover: destino dentro del mapa y casilla libre; la unidad **camina celda a celda** (BFS esquiva obstáculos) hasta llegar — nada de teletransporte.
 6. Atacar: distancia ≤ `RangoAtaque`; daño = max(0, ataque - defensa).
 7. Victoria: jugador derrotado si no tiene Centro Urbano con vida **o** no tiene unidades.
 
