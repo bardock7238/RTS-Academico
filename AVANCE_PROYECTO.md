@@ -202,7 +202,8 @@ Modelo congelado: estas se documentan y se explican, no se arreglan ("deuda téc
 1. [x] **Diagnóstico y Plan de Trabajo:** Revisión exhaustiva completada. El código compila correctamente (PRUEBA OK y 71 OK).
 2. [x] **Revisión de la API:** Se renombraron `AplicarAtaqueEnUnidadLocal` a `AplicarAtaqueRivalAUnidad` y `AplicarAtaqueEnEdificioLocal` a `AplicarAtaqueRivalAEdificio` para mantener la simetría y la convención `Rival` de la fachada del Modelo.
 3. [x] **Nuevos Recursos (Hierro y Piedra):** Añadidos a `Tipos.cs`, `Jugador.cs`, y `InstantaneaJuego.cs`. Balance de `DatosDelJuego.cs` para usarlos en unidades y edificios. Actualizado `Simulacion.cs` (`EntregarRecurso`, `ConstruirEdificio`, `EntrenarUnidad`).
-4. [ ] **Vista**: escena Unity con mapa/sprites por enum, barras de vida/progreso, HUD de recursos y red, HUD de batalla, panel de fin de partida.
+4. [/] **Vista**: escena Unity con mapa/sprites por enum, barras de vida/progreso, HUD de recursos (5 recursos: Oro/Madera/Comida/Hierro/Piedra), HUD de red, HUD de batalla, panel de fin de partida.
+   → Ver **`GUIA_VISTA.md`** para la guía completa de implementación (skeletons de código, API del Controlador, pasos en orden).
 5. [ ] **Documentación**: diagramas de secuencia actualizados.
 6. [ ] **Pruebas EditMode de Unity** (3 casos pedidos): concurrencia, red y victoria del lado del editor.
 7. [ ] **Evidencia de ejecución**: capturas de archivos txt.
