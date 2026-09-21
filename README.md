@@ -60,10 +60,13 @@ el Modelo.
 
 ## Controles (Vista mínima)
 
-- Clic en casilla: seleccionar/mover unidad.
-- `QWER`: construir (Casa, Cuartel, Torre, Centro Urbano).
-- `1-4`: entrenar (Aldeano, Soldado, Arquero, Caballero).
-- `C`: recoger item cercano · `Esc`: salir.
+- Clic izq: seleccionar unidad · clic con unidad: contextual (item → va a
+  recogerlo, yacimiento con aldeano → recolecta, enemigo → atacar, vacío → caminar).
+- `QWER`: entrenar (Aldeano, Soldado, Arquero, Caballero).
+- `1-4`: construir (Casa, Cuartel, Torre, Centro Urbano).
+- `C`: modo item — clic en el item y la unidad **caminará sola** a recogerlo
+  (segunda `C` = item más cercano). Sin selección, autoselecciona la unidad viva más cercana.
+- `I`: ir directo al item más cercano · `Esc`: cancelar viaje / selección.
 
 ## Documentación
 

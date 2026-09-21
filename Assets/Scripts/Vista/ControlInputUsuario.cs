@@ -14,7 +14,7 @@ namespace Vista
         private Edificio _edificioSeleccionado;
 
         private TipoEdificio? _modoConstruccion;
-        private bool _modoRecoleccion;
+        private bool _modoItem; // C: el próximo clic busca un item y la unidad va sola
 
         public void Inicializar(GestorJuego gestor)
         {
@@ -41,7 +41,7 @@ namespace Vista
             if (Input.GetKeyDown(KeyCode.Alpha3)) IniciarConstruccion(TipoEdificio.Torre);
             if (Input.GetKeyDown(KeyCode.Alpha4)) IniciarConstruccion(TipoEdificio.CentroUrbano);
 
-            if (Input.GetKeyDown(KeyCode.C)) AlternarRecoleccion();
+            if (Input.GetKeyDown(KeyCode.C)) IniciarModoItem();
             if (Input.GetKeyDown(KeyCode.I)) RecogerItemCercano();
             if (Input.GetKeyDown(KeyCode.Escape))
             {
@@ -54,7 +54,7 @@ namespace Vista
                     return;
                 }
                 _modoConstruccion = null;
-                _modoRecoleccion = false;
+                _modoItem = false;
                 _seleccionada = null;
                 _edificioSeleccionado = null;
                 _gestor.VistaTablero?.LimpiarSeleccion();
@@ -117,19 +117,32 @@ namespace Vista
             // (item / recolectar / atacar / mover). El clic der hace solo mover/atacar.
             if (_seleccionada != null)
             {
-                // Clic en item (amarillo): si está al lado lo recoge; si no,
+                // Modo item (C): el clic elige el item (exacto o el más cercano
+                // al punto) y la unidad camina sola a recogerlo.
+                if (_modoItem && !clicDerecho)
+                {
+                    Item objetivo = BuscarItemEn(x, y) ?? BuscarItemMasCercanoA(x, y);
+                    _modoItem = false;
+                    if (objetivo == null)
+                    {
+                        _gestor.MostrarMensaje("No hay items en el mapa (modo item cancelado)");
+                        return;
+                    }
+                    RecogerItemConClick(objetivo);
+                    return;
+                }
+
+                // Clic en item (sin modo): si está al lado lo recoge; si no,
                 // se mueve a su lado y lo recoge (mismo flujo que recolectar).
-                Item itemClic = null;
-                foreach (Item it in foto.Items)
-                    if (it.PosicionX == x && it.PosicionY == y && !it.Recogido) { itemClic = it; break; }
+                Item itemClic = BuscarItemEn(x, y);
                 if (itemClic != null && !clicDerecho)
                 {
                     RecogerItemConClick(itemClic);
                     return;
                 }
 
-                // Modo recolección + aldeano + clic en yacimiento (camina si lejos).
-                if (_modoRecoleccion && _seleccionada.EsRecolector)
+                // Clic en yacimiento con aldeano (solo izq) → camina y recolecta.
+                if (!clicDerecho && _seleccionada.EsRecolector)
                 {
                     Recurso r = null;
                     foreach (Recurso rec in foto.Recursos)
@@ -142,7 +155,6 @@ namespace Vista
                         if (ok && ady) _gestor.MostrarMensaje($"Recolectando {r.Tipo}");
                         else if (ok) _gestor.MostrarMensaje($"Caminando a {r.Tipo} ({r.PosicionX},{r.PosicionY})...");
                         else _gestor.AccionRechazada($"recolectar {r.Tipo}");
-                        _modoRecoleccion = false;
                         return;
                     }
                 }
@@ -170,6 +182,7 @@ namespace Vista
                 }
 
                 // Casilla vacía/en propia → caminar hasta ahí (sin teletransporte).
+                _modoItem = false;
                 bool movio = _gestor.Controlador.MoverUnidad(_seleccionada, x, y);
                 if (movio)
                 {
@@ -251,6 +264,82 @@ namespace Vista
             RecogerItemConClick(mejor);
         }
 
+        // C: modo item. Con unidad seleccionada, arm el modo (el próximo clic
+        // manda a la unidad a recoger); sin selección, autoselecciona la unidad
+        // viva más cercana a la cámara. Segunda pulsada C = item más cercano.
+        private void IniciarModoItem()
+        {
+            if (_seleccionada == null)
+            {
+                var foto = _gestor.UltimaFoto;
+                if (foto != null && Camera.main != null)
+                {
+                    int cx = Mathf.RoundToInt(Camera.main.transform.position.x);
+                    int cy = Mathf.RoundToInt(Camera.main.transform.position.y);
+                    _seleccionada = UnidadMasCercanaA(foto, cx, cy);
+                    if (_seleccionada != null)
+                    {
+                        _edificioSeleccionado = null;
+                        _gestor.VistaTablero?.MarcarSeleccion(_seleccionada.PosicionX, _seleccionada.PosicionY);
+                        _gestor.MostrarMensaje($"Seleccionado: {_seleccionada.Tipo}");
+                    }
+                }
+                if (_seleccionada == null)
+                {
+                    _gestor.MostrarMensaje("No hay unidades vivas para recoger");
+                    return;
+                }
+            }
+
+            if (_modoItem)
+            {
+                _modoItem = false;
+                RecogerItemCercano();
+                return;
+            }
+
+            _modoConstruccion = null;
+            _modoItem = true;
+            _gestor.MostrarMensaje("Clic en un item: la unidad irá sola a recogerlo (C otra vez = más cercano)");
+        }
+
+        private Item BuscarItemEn(int x, int y)
+        {
+            var foto = _gestor.UltimaFoto;
+            if (foto == null) return null;
+            foreach (Item it in foto.Items)
+                if (!it.Recogido && it.PosicionX == x && it.PosicionY == y) return it;
+            return null;
+        }
+
+        private Item BuscarItemMasCercanoA(int x, int y)
+        {
+            var foto = _gestor.UltimaFoto;
+            if (foto == null) return null;
+            Item mejor = null;
+            int mejorD = int.MaxValue;
+            foreach (Item it in foto.Items)
+            {
+                if (it.Recogido) continue;
+                int d = Mathf.Abs(it.PosicionX - x) + Mathf.Abs(it.PosicionY - y);
+                if (d < mejorD) { mejorD = d; mejor = it; }
+            }
+            return mejor;
+        }
+
+        private static Unidad UnidadMasCercanaA(InstantaneaJuego foto, int x, int y)
+        {
+            Unidad mejor = null;
+            int mejorD = int.MaxValue;
+            foreach (Unidad u in foto.UnidadesLocal)
+            {
+                if (!u.EstaViva) continue;
+                int d = Mathf.Abs(u.PosicionX - x) + Mathf.Abs(u.PosicionY - y);
+                if (d < mejorD) { mejorD = d; mejor = u; }
+            }
+            return mejor;
+        }
+
         private static bool SobreUi()
         {
             if (EventSystem.current == null) return false;
@@ -279,27 +368,6 @@ namespace Vista
             bool ok = _gestor.Controlador.EntrenarUnidad(tipo, en);
             if (ok) _gestor.MostrarMensaje($"Entrenando {tipo} en {en}");
             else _gestor.AccionRechazada($"entrenar {tipo} en {en}");
-        }
-
-        private void AlternarRecoleccion()
-        {
-            if (_seleccionada == null || !_seleccionada.EsRecolector)
-            {
-                _gestor.MostrarMensaje("Selecciona un aldeano (clic izq)");
-                return;
-            }
-
-            if (_gestor.Controlador.EstaRecolectando(_seleccionada))
-            {
-                bool stop = _gestor.Controlador.DetenerRecoleccion(_seleccionada);
-                _gestor.MostrarMensaje(stop ? "Recolección detenida" : "No estaba recolectando");
-                _modoRecoleccion = false;
-            }
-            else
-            {
-                _modoRecoleccion = true;
-                _gestor.MostrarMensaje("Clic en un yacimiento o item para recoger");
-            }
         }
 
         // Botones de acción en la barra inferior (placeholder; issue #6/#9 los embellece).
@@ -333,8 +401,8 @@ namespace Vista
             CrearBoton(barra.transform, "Torre [3]", () => IniciarConstruccion(TipoEdificio.Torre), 2);
             CrearBoton(barra.transform, "Aldeano [Q]", () => Entrenar(TipoUnidad.Aldeano, TipoEdificio.CentroUrbano), 3);
             CrearBoton(barra.transform, "Soldado [W]", () => Entrenar(TipoUnidad.Soldado, TipoEdificio.Cuartel), 4);
-            CrearBoton(barra.transform, "Recolectar [C]", AlternarRecoleccion, 5);
-            CrearBoton(barra.transform, "Item [I]", RecogerItemCercano, 6);
+            CrearBoton(barra.transform, "Item [C]", IniciarModoItem, 5);
+            CrearBoton(barra.transform, "Cercano [I]", RecogerItemCercano, 6);
         }
 
         private static void CrearBoton(Transform padre, string etiqueta, UnityEngine.Events.UnityAction accion, int indice)

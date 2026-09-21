@@ -372,7 +372,9 @@ classDiagram
     class ControlInputUsuario {
         <<MonoBehaviour>>
         +Inicializar(GestorJuego)
+        -IniciarModoItem()
         -RecogerItemCercano()
+        -RecogerItemConClick(Item)
     }
     class PanelFinPartida {
         <<MonoBehaviour>>
