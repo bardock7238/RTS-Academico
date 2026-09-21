@@ -670,7 +670,8 @@ namespace Modelo
         // [Combate] El jugador ordena atacar (clic en enemigo). Si ya está en
         // rango, pega YA; si no, fija el objetivo y el destino a la casilla del
         // rival (con apilamiento puede compartir casilla) y camina solo hasta
-        // que esté a golpe — así "clic derecho = atacar" siempre avanza.
+        // que esté a golpe — así "clic en enemigo" siempre avanza y termina
+        // pegando aunque no estuvieras en rango.
         public bool MoverAAtacar(Unidad atacante, Unidad enemigo)
         {
             lock (Candado)
@@ -681,27 +682,24 @@ namespace Modelo
                     !JugadorEnemigo.Unidades.Contains(enemigo)) return false;
                 if (!atacante.PuedeAtacar || !enemigo.EstaViva) return false;
 
-                atacante.Objetivo = enemigo;
-
-                if (Distancia(atacante, enemigo) <= atacante.RangoAtaque)
+                // Fuera de rango (o enfriando): fija objetivo y DESTINO a la
+                // casilla del enemigo (es transitable aunque haya otras unidades).
+                if (Distancia(atacante, enemigo) > atacante.RangoAtaque ||
+                    atacante.TiempoEsperaAtaque > 0)
                 {
+                    atacante.Objetivo = enemigo;
+                    CortarRecoleccionYAnunciar(atacante, JugadorLocal);
                     atacante.LimpiarDestino();
-                    if (atacante.TiempoEsperaAtaque > 0) return true; // enfriando: ya "ataca"
-                    return Atacar(atacante, enemigo);
+                    atacante.FijarDestino(enemigo.PosicionX, enemigo.PosicionY);
+                    atacante.Estado = EstadoUnidad.Moviendo;
+                    GestorArchivos.RegistrarAccion(
+                        JugadorLocal.Nombre, "Ataque",
+                        $"{atacante.Tipo} camina hacia {enemigo.Tipo} ({enemigo.PosicionX},{enemigo.PosicionY}) para atacar.");
+                    return true;
                 }
 
-                // Destino del combate: con apilamiento puede ser la MISMA casilla
-                // del rival (no hace falta una libre al lado).
-                atacante.LimpiarDestino();
-                atacante.Objetivo = enemigo;
-                atacante.FijarDestino(enemigo.PosicionX, enemigo.PosicionY);
-                atacante.Estado = EstadoUnidad.Moviendo;
-                CortarRecoleccionYAnunciar(atacante, JugadorLocal); // corta mina si la había
-                atacante.FijarDestino(enemigo.PosicionX, enemigo.PosicionY);
-                GestorArchivos.RegistrarAccion(
-                    JugadorLocal.Nombre, "Ataque",
-                    $"{atacante.Tipo} avanza hacia {enemigo.Tipo} ({enemigo.PosicionX},{enemigo.PosicionY}).");
-                return true;
+                // En rango y listo: pega de inmediato (Atacar pone el enfriamiento).
+                return Atacar(atacante, enemigo);
             }
         }
 
