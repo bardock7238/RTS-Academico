@@ -55,7 +55,7 @@ IA económica+militar, Controlador mantiene API, arte a cargo del compañero):
   - `GestorJuego`: raíz con `RuntimeInitializeOnLoadMethod`, `ConstruirUiSiFalta` (cámara → EventSystem → tablero → canvas/HUD → input → panel fin), expone `VistaTablero`.
   - `VistaTablero`: pool de sprites, rejilla 30×30 redibujada cada frame (bug de slots corregido), campos `[SerializeField] Sprite[]` para el arte del compañero (issues #4–#9).
   - `HudRecursos`: HUD de 5 recursos + tiempo + mensajes; fallback de Canvas corregido.
-  - `ControlInputUsuario`: clics y teclas QWER (entrenar) / 1-4 (construir) / **C** (modo item: clic → la unidad camina sola a recogerlo; 2.ª C = más cercano; sin selección autoselecciona) / **I** (`RecogerItemCercano`) / Esc → API del Controlador.
+  - `ControlInputUsuario`: clics y teclas QWER (entrenar) / 1-4 (construir) / **C** (modo recoger: clic en yacimiento o item → la unidad camina sola; autoselecciona aldeano; 2.ª C = lo más cercano) / **I** (`RecogerItemCercano`) / Esc → API del Controlador.
   - `PanelFinPartida`: modal de fin + Reintentar (`LoadScene`; `Detener()` solo en `OnDestroy` del Gestor).
 - **Escena**: `Assets/Escenas/Juego.unity` (cámara ortográfica centrada en el mapa, size 15.5 + placeholder); registrada en `ProjectSettings/EditorBuildSettings.asset`.
 - **Verificación**: Unity batch sin `error CS` (`Exiting batchmode successfully`); suites de escritorio **rts-pve-test 18 OK** y **rts-red-test 8 OK, 0 fallos**.
@@ -82,7 +82,7 @@ y añadir arte temporal:
   - **`Vista/SpriteFactory.cs` (nuevo)**: pixel-art 16×16 **generado por código** — 4 unidades (aldeano/soldado/arquero/caballero), 4 edificios, 5 recursos, 4 ítems y tile — como arte TEMPORAL hasta que el compañero aporte el definitivo (issues #4–#9); cualquier sprite enlazado en el Inspector se respeta.
   - `VistaTablero`: carga automática del arte si los slots están vacíos; ítems con **sprite por tipo** (tinte blanco para no destiñir el arte); **suavizado de movimiento** (interpolación `MoveTowards` a 10 celdas/s entre latidos → el sprite se desliza, no salta) + poda de unidades ya desaparecidas.
   - Cámara: ortográfica size **15.5** centrada en el mapa 30×30.
-- **Mapa 30×30 + ~17 yacimientos** (4 cuadrantes + central), spawner de ítems cada 15 s con `MaxItemsEnMapa = 8`, controles unificados a **clic izquierdo** (el derecho también actúa), botones `Item [C]` y `Cercano [I]` en la barra (1040 px); yacimiento con aldeano ya no pide modo previo (clic directo = recolectar caminando).
+- **Mapa 30×30 + ~17 yacimientos** (4 cuadrantes + central), spawner de ítems cada 15 s con `MaxItemsEnMapa = 8`, controles unificados a **clic izquierdo** (el derecho también actúa), botones `Recoger [C]` y `Item [I]` en la barra (1040 px); C = modo dual yacimiento/item con autoselección de aldeano; clic directo en yacimiento con aldeano también recolecta (sin modo previo).
 - **Verificación**: compilación COMPLETA (Modelo+Controlador+Vista) contra las DLLs de Unity 6000.6.0f1 → **0 errores, 0 avisos**; suites de escritorio **rts-pve-test 23 OK, 0 fallos** (incluye: caminar rodeando obstáculos, no teletransporta, cancelar viaje, recoger ítem al llegar, recolección por viaje, empate de batalla) y **rts-red-test 8 OK, 0 fallos**.
 
 ### REVISIÓN EXTERNA + ARREGLOS DE ROBUSTEZ (19-sep) — Modelo FROZEN

@@ -372,7 +372,9 @@ classDiagram
     class ControlInputUsuario {
         <<MonoBehaviour>>
         +Inicializar(GestorJuego)
-        -IniciarModoItem()
+        -IniciarModoRecoger()
+        -EjecutarModoRecoger(int, int)
+        -IntentarRecolectar(InstantaneaJuego, int, int)
         -RecogerItemCercano()
         -RecogerItemConClick(Item)
     }
