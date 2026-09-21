@@ -78,12 +78,17 @@ namespace Modelo
         }
 
         // Trabajos en segundo plano activos: para poder cancelarlos.
-        private readonly Dictionary<TipoUnidad, CancellationTokenSource> _entrenamientosActivos =
-            new Dictionary<TipoUnidad, CancellationTokenSource>();
+        // [PVE] Entrenamientos clave por (jugador, tipo): la IA y el humano local
+        // pueden entrenar el MISMO tipo a la vez sin pisarse.
+        private readonly Dictionary<(Jugador, TipoUnidad), CancellationTokenSource> _entrenamientosActivos =
+            new Dictionary<(Jugador, TipoUnidad), CancellationTokenSource>();
         private readonly Dictionary<Edificio, CancellationTokenSource> _construccionesActivas =
             new Dictionary<Edificio, CancellationTokenSource>();
         private readonly Dictionary<Unidad, CancellationTokenSource> _recolectoresActivos =
             new Dictionary<Unidad, CancellationTokenSource>();
+
+        // [PVE] IA económica + militar del oponente (corre en SU Task, con lock(Candado)).
+        private IAEnemiga _ia;
 
         // [Concurrencia] Reloj del juego (RTS en tiempo real): un Task de fondo que
         // suma 1 segundo por cada segundo real. Se cancela con este token.
@@ -102,6 +107,8 @@ namespace Modelo
         public int RelojTickMs { get; set; } = 1000;
         // Cada cuántos ms siembra el spawner un item (host).
         public int IntervaloSpawnerMs { get; set; } = 3000;
+        // [PVE] Cada cuántos ms decide la IA enemiga (las pruebas lo bajan).
+        public int IntervaloIaMs { get; set; } = 2000;
         // Cuántos SEGUNDOS dura el Casco antes de que su Task lo apague.
         public int DuracionCascoSegundos { get; set; } = 10;
 
@@ -210,13 +217,33 @@ namespace Modelo
             }
         }
 
-        // [Concurrencia] APAGA el motor: cancela el reloj, el spawner y todos los
-        // trabajos en curso (entrenamientos y recolecciones). La Vista/Unity debe
+        // [PVE] Arranca la IA enemiga (económica + militar). Solo en modo local contra
+        // la máquina; el modo red/PvP no la enciende. Seguro de llamar una sola vez.
+        public bool IniciarIA()
+        {
+            lock (Candado)
+            {
+                if (_detenido || _ia != null) return false;
+                _ia = new IAEnemiga(this) { IntervaloDecisionMs = IntervaloIaMs };
+                _ia.Iniciar();
+                // El bucle de batalla avanza las unidades con ControladaPorIA de la IA.
+                BucleActivo = true;
+                GestorArchivos.RegistrarAccion(JugadorEnemigo.Nombre, "IA",
+                    "IA enemiga iniciada (economía + militar, concurrente).");
+                return true;
+            }
+        }
+
+        public bool IAActiva => _ia != null && _ia.Activa;
+
+        // [Concurrencia] APAGA el motor: cancela el reloj, el spawner, la IA y todos
+        // los trabajos en curso (entrenamientos y recolecciones). La Vista/Unity debe
         // llamar esto al salir de la escena o del modo Play, para no dejar Tasks
         // corriendo por detrás ("partida fantasma"). Es seguro llamarlo varias veces.
         public void Detener()
         {
             _detenido = true;
+            _ia?.Detener();
             _ctsReloj.Cancel();
             _ctsSpawner.Cancel();
             _ctsSimulacion.Cancel();
@@ -237,13 +264,20 @@ namespace Modelo
         // ACCIONES DEL JUGADOR (todas con lock(Candado) interno)
 
         // 1. Mover Unidad
-        public bool MoverUnidad(Unidad unidad, int nuevoX, int nuevoY)
+        public bool MoverUnidad(Unidad unidad, int nuevoX, int nuevoY) =>
+            MoverUnidadPara(JugadorLocal, unidad, nuevoX, nuevoY);
+
+        // [PVE] La IA mueve sus unidades con las mismas validaciones de casilla.
+        public bool MoverUnidadIA(Unidad unidad, int nuevoX, int nuevoY) =>
+            MoverUnidadPara(JugadorEnemigo, unidad, nuevoX, nuevoY);
+
+        private bool MoverUnidadPara(Jugador dueno, Unidad unidad, int nuevoX, int nuevoY)
         {
             lock (Candado)
             {
                 if (_detenido) return false;
                 if (unidad == null) return false;
-                if (!JugadorLocal.Unidades.Contains(unidad)) return false;
+                if (!dueno.Unidades.Contains(unidad)) return false;
                 if (!Tablero.EsCoordenadaValida(nuevoX, nuevoY)) return false;
                 if (!Tablero.EsCasillaLibre(nuevoX, nuevoY, JugadorLocal, JugadorEnemigo)) return false;
 
@@ -252,7 +286,7 @@ namespace Modelo
                 unidad.MoverA(nuevoX, nuevoY);
 
                 GestorArchivos.RegistrarAccion(
-                    JugadorLocal.Nombre,
+                    dueno.Nombre,
                     "Mover",
                     $"{unidad.Tipo} de ({origenX},{origenY}) a ({nuevoX},{nuevoY})");
                 return true;
@@ -260,7 +294,14 @@ namespace Modelo
         }
 
         // 2. Construir Edificio (valida coordenadas, choque, yacimiento y costos del catálogo)
-        public bool ConstruirEdificio(TipoEdificio tipo, int x, int y)
+        public bool ConstruirEdificio(TipoEdificio tipo, int x, int y) =>
+            ConstruirEdificioPara(JugadorLocal, tipo, x, y);
+
+        // [PVE] La IA construye para SU jugador (gasta sus recursos, misma validación).
+        public bool ConstruirEdificioIA(TipoEdificio tipo, int x, int y) =>
+            ConstruirEdificioPara(JugadorEnemigo, tipo, x, y);
+
+        private bool ConstruirEdificioPara(Jugador dueno, TipoEdificio tipo, int x, int y)
         {
             lock (Candado)
             {
@@ -270,11 +311,11 @@ namespace Modelo
                 if (!Tablero.EsCasillaLibre(x, y, JugadorLocal, JugadorEnemigo)) return false;
 
                 EdificioConfig config = DatosDelJuego.EdificiosBase[tipo];
-                if (!JugadorLocal.Gastar(config.CostoMadera, config.CostoOro, config.CostoComida, config.CostoHierro, config.CostoPiedra))
+                if (!dueno.Gastar(config.CostoMadera, config.CostoOro, config.CostoComida, config.CostoHierro, config.CostoPiedra))
                     return false;
 
                 Edificio nuevoEdificio = DatosDelJuego.CrearEdificio(tipo, x, y);
-                JugadorLocal.AgregarEdificio(nuevoEdificio);
+                dueno.AgregarEdificio(nuevoEdificio);
 
                 // La obra avanza sola en segundo plano y completa el edificio.
                 CancellationTokenSource cts = new CancellationTokenSource();
@@ -282,40 +323,48 @@ namespace Modelo
                 IniciarTarea(ConstruccionTaskAsync(
                     nuevoEdificio,
                     config.TiempoConstruccionSegundos,
-                    JugadorLocal.Nombre,
+                    dueno.Nombre,
                     cts), "Construccion");
 
                 GestorArchivos.RegistrarAccion(
-                    JugadorLocal.Nombre,
+                    dueno.Nombre,
                     "Construir",
-                    $"{tipo} en ({x},{y}). Madera: {JugadorLocal.Madera}, Oro: {JugadorLocal.Oro}, Comida: {JugadorLocal.Comida}");
+                    $"{tipo} en ({x},{y}). Madera: {dueno.Madera}, Oro: {dueno.Oro}, Comida: {dueno.Comida}");
                 return true;
             }
         }
 
         // 3. Entrenar Unidad: valida, cobra y lanza el "trabajo" en segundo plano.
         // [Concurrencia] La Task no bloquea al usuario: la unidad aparece al terminar.
-        public bool EntrenarUnidad(TipoUnidad tipo, TipoEdificio edificioOrigen)
+        public bool EntrenarUnidad(TipoUnidad tipo, TipoEdificio edificioOrigen) =>
+            EntrenarUnidadPara(JugadorLocal, tipo, edificioOrigen);
+
+        // [PVE] La IA entrena para SU jugador (misma regla, sus recursos).
+        public bool EntrenarUnidadIA(TipoUnidad tipo, TipoEdificio edificioOrigen) =>
+            EntrenarUnidadPara(JugadorEnemigo, tipo, edificioOrigen);
+
+        private bool EntrenarUnidadPara(Jugador dueno, TipoUnidad tipo, TipoEdificio edificioOrigen)
         {
             lock (Candado)
             {
                 if (_detenido || !EstadoPartida.EnEjecucion) return false;
-                Edificio edificio = JugadorLocal.Edificios.FirstOrDefault(e => e.Tipo == edificioOrigen);
+                Edificio edificio = dueno.Edificios.FirstOrDefault(e => e.Tipo == edificioOrigen);
                 if (edificio == null || !edificio.PuedeEntrenar(tipo)) return false;
-                if (_entrenamientosActivos.ContainsKey(tipo)) return false; // ya hay uno en curso
+                // [PVE] Clave por (jugador, tipo): IA y humano no se pisan el slot.
+                if (_entrenamientosActivos.ContainsKey((dueno, tipo))) return false;
 
                 UnidadConfig config = DatosDelJuego.UnidadesBase[tipo];
-                if (!JugadorLocal.Gastar(config.CostoMadera, config.CostoOro, config.CostoComida, config.CostoHierro, config.CostoPiedra))
+                if (!dueno.Gastar(config.CostoMadera, config.CostoOro, config.CostoComida, config.CostoHierro, config.CostoPiedra))
                     return false;
 
                 CancellationTokenSource cts = new CancellationTokenSource();
-                _entrenamientosActivos[tipo] = cts;
+                _entrenamientosActivos[(dueno, tipo)] = cts;
 
                 // Lanzamos la tarea y seguimos: no bloqueamos al usuario.
-                IniciarTarea(EntrenamientoTaskAsync(tipo, config, cts.Token), "Entrenamiento");
+                IniciarTarea(EntrenamientoTaskAsync(tipo, config, dueno, cts.Token), "Entrenamiento");
 
                 GestorArchivos.RegistrarAccion(
-                    JugadorLocal.Nombre,
+                    dueno.Nombre,
                     "Entrenar",
                     $"{tipo} iniciado en {edificioOrigen}.");
                 return true;
@@ -356,7 +405,7 @@ namespace Modelo
             }
         }
 
-        private async Task EntrenamientoTaskAsync(TipoUnidad tipo, UnidadConfig config, CancellationToken token)
+        private async Task EntrenamientoTaskAsync(TipoUnidad tipo, UnidadConfig config, Jugador dueno, CancellationToken token)
         {
             bool completado = true;
             try
@@ -370,11 +419,16 @@ namespace Modelo
 
             lock (Candado)
             {
-                _entrenamientosActivos.Remove(tipo);
+                // Limpieza con guardia: solo quita el registro cuyo token es el suyo.
+                if (_entrenamientosActivos.TryGetValue((dueno, tipo), out CancellationTokenSource ctsActual) &&
+                    ctsActual.Token == token)
+                {
+                    _entrenamientosActivos.Remove((dueno, tipo));
+                }
                 if (!completado || token.IsCancellationRequested) return;
 
                 Unidad nueva = DatosDelJuego.CrearUnidad(tipo, 0, 0);
-                Edificio origen = JugadorLocal.Edificios.FirstOrDefault(
+                Edificio origen = dueno.Edificios.FirstOrDefault(
                     e => e.UnidadesEntrenables.Contains(tipo) && e.EstaOperativo);
                 if (origen != null)
                 {
@@ -382,10 +436,16 @@ namespace Modelo
                     nueva.MoverA(x, y);
                 }
 
-                JugadorLocal.AgregarUnidad(nueva);
-                Transmitir($"ENTRENAR;{tipo};{nueva.PosicionX};{nueva.PosicionY}");
+                // [PVE] Las tropas de la IA pelean solas vía el bucle de simulación;
+                // las del jugador local las controla la persona (false por defecto).
+                if (dueno == JugadorEnemigo && !nueva.EsRecolector)
+                    nueva.ControladaPorIA = true;
+
+                dueno.AgregarUnidad(nueva);
+                if (dueno == JugadorLocal)
+                    Transmitir($"ENTRENAR;{tipo};{nueva.PosicionX};{nueva.PosicionY}");
                 GestorArchivos.RegistrarAccion(
-                    JugadorLocal.Nombre,
+                    dueno.Nombre,
                     "Entrenar",
                     $"{tipo} listo en ({nueva.PosicionX},{nueva.PosicionY}).");
             }
@@ -394,12 +454,20 @@ namespace Modelo
         // 4. Recolectar recursos en segundo plano (un hilo por aldeano).
         // [Concurrencia] Task de fondo + lock(Candado) + CancellationToken:
         // el aldeano trabaja, suma recursos y el jugador puede seguir jugando.
-        public bool IniciarRecoleccion(Unidad aldeano, Recurso recurso)
+        public bool IniciarRecoleccion(Unidad aldeano, Recurso recurso) =>
+            IniciarRecoleccionPara(aldeano, recurso, JugadorLocal);
+
+        // [PVE] El aldeano de la IA recolecta para el enemigo (mismas reglas).
+        public bool IniciarRecoleccionIA(Unidad aldeano, Recurso recurso) =>
+            IniciarRecoleccionPara(aldeano, recurso, JugadorEnemigo);
+
+        private bool IniciarRecoleccionPara(Unidad aldeano, Recurso recurso, Jugador dueno)
         {
             lock (Candado)
             {
                 if (_detenido || !EstadoPartida.EnEjecucion) return false;
                 if (aldeano == null || recurso == null) return false;
+                if (!dueno.Unidades.Contains(aldeano)) return false;
                 if (!aldeano.EsRecolector || !aldeano.EstaViva) return false;
                 if (recurso.EstaAgotado) return false;
                 if (!Tablero.RecursosEnMapa.Contains(recurso)) return false;
@@ -410,10 +478,10 @@ namespace Modelo
                 CancellationTokenSource cts = new CancellationTokenSource();
                 _recolectoresActivos[aldeano] = cts;
 
-                IniciarTarea(RecoleccionTaskAsync(aldeano, recurso, cts.Token), "Recoleccion");
+                IniciarTarea(RecoleccionTaskAsync(aldeano, recurso, dueno, cts.Token), "Recoleccion");
 
                 GestorArchivos.RegistrarAccion(
-                    JugadorLocal.Nombre,
+                    dueno.Nombre,
                     "Recolectar",
                     $"{aldeano.Tipo} recolecta {recurso.Tipo} en ({recurso.PosicionX},{recurso.PosicionY}).");
                 return true;
@@ -446,7 +514,7 @@ namespace Modelo
             }
         }
 
-        private async Task RecoleccionTaskAsync(Unidad aldeano, Recurso recurso, CancellationToken token)
+        private async Task RecoleccionTaskAsync(Unidad aldeano, Recurso recurso, Jugador dueno, CancellationToken token)
         {
             int cantidadPorCiclo = DatosDelJuego.UnidadesBase[aldeano.Tipo].CapacidadRecoleccion;
             bool terminoSolo = false; // True si dejó de recolectar por sí mismo (no por detenerlo).
@@ -463,13 +531,13 @@ namespace Modelo
                     if (cantidad <= 0) { terminoSolo = true; break; }
 
                     // [Items] Pasivo Herramientas: +5% de lo recolectado por ciclo.
-                    cantidad += (int)Math.Round(cantidad * JugadorLocal.BonusRecoleccion);
+                    cantidad += (int)Math.Round(cantidad * dueno.BonusRecoleccion);
 
-                    EntregarRecurso(recurso.Tipo, cantidad);
+                    EntregarRecurso(dueno, recurso.Tipo, cantidad);
                     GestorArchivos.RegistrarAccion(
-                        JugadorLocal.Nombre,
+                        dueno.Nombre,
                         "Recolectar",
-                        $"+{cantidad} de {recurso.Tipo}. Total O:{JugadorLocal.Oro} M:{JugadorLocal.Madera} C:{JugadorLocal.Comida} H:{JugadorLocal.Hierro} P:{JugadorLocal.Piedra}");
+                        $"+{cantidad} de {recurso.Tipo}. Total O:{dueno.Oro} M:{dueno.Madera} C:{dueno.Comida} H:{dueno.Hierro} P:{dueno.Piedra}");
                 }
             }
 
@@ -488,7 +556,7 @@ namespace Modelo
 
             // Si terminó solo (yacimiento vacío o aldeano muerto), avisa al rival para
             // que su copia también vuelva a Idle. Si lo detuvieron, ya avisó el Controlador.
-            if (terminoSolo)
+            if (terminoSolo && dueno == JugadorLocal)
             {
                 lock (Candado)
                 {
@@ -497,15 +565,15 @@ namespace Modelo
             }
         }
 
-        private void EntregarRecurso(TipoRecurso tipo, int cantidad)
+        private void EntregarRecurso(Jugador dueno, TipoRecurso tipo, int cantidad)
         {
             switch (tipo)
             {
-                case TipoRecurso.Oro: JugadorLocal.Recibir(0, cantidad, 0, 0, 0); break;
-                case TipoRecurso.Madera: JugadorLocal.Recibir(cantidad, 0, 0, 0, 0); break;
-                case TipoRecurso.Comida: JugadorLocal.Recibir(0, 0, cantidad, 0, 0); break;
-                case TipoRecurso.Hierro: JugadorLocal.Recibir(0, 0, 0, cantidad, 0); break;
-                case TipoRecurso.Piedra: JugadorLocal.Recibir(0, 0, 0, 0, cantidad); break;
+                case TipoRecurso.Oro: dueno.Recibir(0, cantidad, 0, 0, 0); break;
+                case TipoRecurso.Madera: dueno.Recibir(cantidad, 0, 0, 0, 0); break;
+                case TipoRecurso.Comida: dueno.Recibir(0, 0, cantidad, 0, 0); break;
+                case TipoRecurso.Hierro: dueno.Recibir(0, 0, 0, cantidad, 0); break;
+                case TipoRecurso.Piedra: dueno.Recibir(0, 0, 0, 0, cantidad); break;
             }
         }
 

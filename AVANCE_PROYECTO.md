@@ -39,7 +39,28 @@
 
 ---
 
-## Estado actual (última sesión: 19-sep)
+## Estado actual (última sesión: 21-sep)
+
+### MODO PVE + VISTA MÍNIMA JUGABLE (21-sep)
+
+Sesión completa de PVE + Vista mínima (decisión del usuario: PVE + red opcional,
+IA económica+militar, Controlador mantiene API, arte a cargo del compañero):
+
+- **Modelo (descongelado solo para PVE)**:
+  - `Simulacion.cs` generalizado a ambos jugadores: `MoverUnidadPara`/`ConstruirEdificioPara`/`EntrenarUnidadPara`/`IniciarRecoleccionPara` + variantes `*IA`; dict de entrenamientos rekeyed `(Jugador, TipoUnidad)`; `EntregarRecurso(Jugador, …)`; recolección por dueño.
+  - **`Modelo/IAEnemiga.cs`** (nuevo): Task de decisión cada `IntervaloDecisionMs` (2000 ms) — economiza (madera si le falta para el Cuartel), construye Cuartel cerca del Centro Urbano, entrena Soldados hasta `PresionMilitarObjetivo=4`. Todo muta vía `*IA` (bajo `lock(Candado)`).
+  - API PVE: `IniciarIA()`, `IAActiva`, `IntervaloIaMs`; `_ia?.Detener()` en `Detener()`.
+- **Controlador**: fachada `IniciarIA()` / `IAActiva`; `EnviarPorRed` sale temprano si `RedPartida == null` (drena cola sin red; evita fuga).
+- **Vista (5 scripts, MVC estricto)**:
+  - `GestorJuego`: raíz con `RuntimeInitializeOnLoadMethod`, `ConstruirUiSiFalta` (cámara → EventSystem → tablero → canvas/HUD → input → panel fin), expone `VistaTablero`.
+  - `VistaTablero`: pool de sprites, rejilla 15×15 redibujada cada frame (bug de slots corregido), campos `[SerializeField] Sprite[]` para el arte del compañero (issues #4–#9).
+  - `HudRecursos`: HUD de 5 recursos + tiempo + mensajes; fallback de Canvas corregido.
+  - `ControlInputUsuario`: clics y teclas QWER / 1-4 / **I** (`RecogerItemCercano`) / Esc → API del Controlador.
+  - `PanelFinPartida`: modal de fin + Reintentar (`LoadScene`; `Detener()` solo en `OnDestroy` del Gestor).
+- **Escena**: `Assets/Escenas/Juego.unity` (cámara ortográfica pos (7,7,-10) size 9 + placeholder); registrada en `ProjectSettings/EditorBuildSettings.asset`.
+- **Verificación**: Unity batch sin `error CS` (`Exiting batchmode successfully`); suites de escritorio **rts-pve-test 18 OK** y **rts-red-test 8 OK, 0 fallos**.
+- **Issues para el compañero**: **#4–#9** (label `vista`).
+- **Docs/diagramas**: `DOCUMENTACION.md` sincronizado (clase `IAEnemiga`, API PVE, clases Vista, secuencia 3.6, concurrencia 8 Tasks, casos de uso PVE); `README.md` actualizado (PVE + controles).
 
 ### REVISIÓN EXTERNA + ARREGLOS DE ROBUSTEZ (19-sep) — Modelo FROZEN
 
@@ -198,17 +219,16 @@ Modelo congelado: estas se documentan y se explican, no se arreglan ("deuda téc
 
 ## PENDIENTE (siguientes pasos)
 
-0. **Modelo congelado (FROZEN, tag `modelo-1.1.0`)** — Se descongeló temporalmente para la Revisión de la API y Nuevos Recursos (Hierro y Piedra).
+0. **Modelo congelado (FROZEN, tag `modelo-1.1.0`)** — Se descongeló para Hierro/Piedra y para el PVE (`IAEnemiga`).
 1. [x] **Diagnóstico y Plan de Trabajo:** Revisión exhaustiva completada. El código compila correctamente (PRUEBA OK y 71 OK).
-2. [x] **Revisión de la API:** Se renombraron `AplicarAtaqueEnUnidadLocal` a `AplicarAtaqueRivalAUnidad` y `AplicarAtaqueEnEdificioLocal` a `AplicarAtaqueRivalAEdificio` para mantener la simetría y la convención `Rival` de la fachada del Modelo.
-3. [x] **Nuevos Recursos (Hierro y Piedra):** Añadidos a `Tipos.cs`, `Jugador.cs`, y `InstantaneaJuego.cs`. Balance de `DatosDelJuego.cs` para usarlos en unidades y edificios. Actualizado `Simulacion.cs` (`EntregarRecurso`, `ConstruirEdificio`, `EntrenarUnidad`).
-4. [/] **Vista**: escena Unity con mapa/sprites por enum, barras de vida/progreso, HUD de recursos (5 recursos: Oro/Madera/Comida/Hierro/Piedra), HUD de red, HUD de batalla, panel de fin de partida.
-   → Ver **`GUIA_VISTA.md`** para la guía completa de implementación (skeletons de código, API del Controlador, pasos en orden).
-5. [ ] **Documentación**: diagramas de secuencia actualizados.
+2. [x] **Revisión de la API:** `AplicarAtaqueRivalAUnidad` / `AplicarAtaqueRivalAEdificio`.
+3. [x] **Nuevos Recursos (Hierro y Piedra):** `Tipos.cs`, `Jugador.cs`, `InstantaneaJuego.cs`, `DatosDelJuego.cs`, `Simulacion.cs`.
+4. [x] **Vista**: escena `Juego.unity` + 5 scripts (GestorJuego, VistaTablero, HudRecursos, ControlInputUsuario, PanelFinPartida). Arte/sprites pendientes del compañero (issues #4–#9, label `vista`).
+5. [x] **Documentación**: diagramas actualizados con PVE/IA + Vista (`DOCUMENTACION.md` §1, §2.1, §3.6, §4, §5).
 6. [ ] **Pruebas EditMode de Unity** (3 casos pedidos): concurrencia, red y victoria del lado del editor.
 7. [ ] **Evidencia de ejecución**: capturas de archivos txt.
-8. [ ] **README** actualizado.
-9. [ ] **Guion de la demo**.
+8. [x] **README** actualizado (PVE, controles, estructura).
+9. [ ] **Guion de la demo** (PVE + red).
 
 ## Instrucciones para la siguiente sesión
 

@@ -108,6 +108,11 @@ namespace Controlador
         public int BajasLocal => Motor.BajasLocal;
         public int BajasEnemigo => Motor.BajasEnemigo;
 
+        // [PVE] Arranca la IA económica + militar del oponente (todo el hilo vive
+        // en el Modelo). La Vista solo llama esto al elegir modo máquina.
+        public bool IniciarIA() => Motor.IniciarIA();
+        public bool IAActiva => Motor.IAActiva;
+
         // API PARA LA VISTA (Unity)
 
         // Foto segura del mundo para pintar. La Vista la llama UNA vez por frame y
@@ -209,7 +214,11 @@ namespace Controlador
 
         private void EnviarPorRed(string mensaje)
         {
-            if (RedPartida != null && RedPartida.EstaConectado)
+            // [PVE] Sin conector (modo máquina): no hay tubo que notificar; no se
+            // cuenta como desync ni se ensucia el log con "NO ENVIADO".
+            if (RedPartida == null) return;
+
+            if (RedPartida.EstaConectado)
             {
                 if (RedPartida.Enviar(mensaje)) return;
             }
@@ -232,7 +241,16 @@ namespace Controlador
         // DE ENTRADA se procesaron.
         public int ProcesarMensajesRedPendientes()
         {
-            if (RedPartida == null) return 0;
+            // [PVE] Sin conector: drenar y descartar la cola saliente del Modelo
+            // (ataques/entrenamientos encolados) para no acumular memoria en modo local.
+            if (RedPartida == null)
+            {
+                while (Motor.HaySalientes)
+                {
+                    if (Motor.SiguienteSaliente() == null) break;
+                }
+                return 0;
+            }
 
             // [Concurrencia] SALIDA: lo que el Modelo encoló (ataque, entrenamiento
             // terminado, item, recoleccion...) se envía SOLO si el tubo está vivo.

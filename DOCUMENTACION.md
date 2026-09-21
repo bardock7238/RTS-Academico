@@ -202,6 +202,7 @@ classDiagram
         +int CicloRecoleccionMs
         +int RelojTickMs
         +int IntervaloSpawnerMs
+        +int IntervaloIaMs
         +int DuracionCascoSegundos
         +int TickSimulacionMs
         +int TicksEntreAtaques
@@ -210,13 +211,18 @@ classDiagram
         +int BajasEnemigo
         +bool BucleActivo
         +int UnidadesEnBatalla
+        +bool IAActiva
         +Func EsperarEntrenamiento
         +Func EsperarConstruccion
         +Instantanea() InstantaneaJuego
         +MoverUnidad(Unidad, int, int) bool
+        +MoverUnidadIA(Unidad, int, int) bool
         +ConstruirEdificio(TipoEdificio, int, int) bool
+        +ConstruirEdificioIA(TipoEdificio, int, int) bool
         +EntrenarUnidad(TipoUnidad, TipoEdificio) bool
+        +EntrenarUnidadIA(TipoUnidad, TipoEdificio) bool
         +IniciarRecoleccion(Unidad, Recurso) bool
+        +IniciarRecoleccionIA(Unidad, Recurso) bool
         +DetenerRecoleccion(Unidad) bool
         +Atacar(Unidad, Unidad) bool
         +AtacarEdificio(Unidad, Edificio) bool
@@ -225,6 +231,7 @@ classDiagram
         +VerificarGanador()
         +IniciarBatalla(int) int
         +DetenerBatalla()
+        +IniciarIA() bool
         +Detener()
         +MoverUnidadRival(int, int, int, int) Unidad
         +AplicarAtaqueRivalAUnidad(int, int, int, int, int) Unidad
@@ -234,6 +241,20 @@ classDiagram
         +CambiarEstadoRecoleccionRival(int, int, bool) bool
         +ColocarItemRival(TipoItem, int, int) bool
         +AplicarRecogidaRival(TipoItem, int, int) bool
+    }
+
+    class IAEnemiga {
+        <<Modelo — PVE>>
+        +int IntervaloDecisionMs
+        +int PresionMilitarObjetivo
+        +bool Activa
+        +int DecisionesEjecutadas
+        +Iniciar()
+        +Detener()
+        -DecidirUnaVez()
+        -GestionarRecoleccion()
+        -GestionarConstruccion()
+        -GestionarEntrenamiento()
     }
 
     class GestorArchivos {
@@ -268,6 +289,8 @@ classDiagram
         +ConectorRed RedPartida
         +string NombreRivalRed
         +int MensajesDescartados
+        +bool IAActiva
+        +IniciarIA() bool
         +MoverUnidad(Unidad, int, int) bool
         +ConstruirEdificio(TipoEdificio, int, int) bool
         +EntrenarUnidad(TipoUnidad, TipoEdificio) bool
@@ -296,6 +319,8 @@ classDiagram
     Simulacion "1" *-- "1" Mapa : Tablero
     Simulacion "1" *-- "1" Partida : EstadoPartida
     Simulacion "1" *-- "2" Jugador : local / enemigo
+    Simulacion "1" *-- "0..1" IAEnemiga : _ia (PVE)
+    IAEnemiga o--> Simulacion : _mundo (lock Candado)
     Unidad --> "0..1" Item : Equipado
     Unidad --> "0..1" Unidad : Objetivo
 
@@ -304,6 +329,7 @@ classDiagram
     Simulacion ..> GestorArchivos : logs
     Simulacion ..> InstantaneaJuego : crea
     Simulacion ..> ConectorRed : (cola de salida)
+    IAEnemiga ..> InstantaneaJuego : lee copia
 
     %% Controlador
     JuegoControlador "1" o-- "1" Simulacion : Motor
@@ -319,51 +345,54 @@ classDiagram
     Recurso ..> TipoRecurso
     Item ..> TipoItem
 
-    %% ================= VISTA (boceto) =================
-    class ArranqueJuego {
+    %% ================= VISTA (implementada — mínima jugable) =================
+    class GestorJuego {
         <<MonoBehaviour>>
         +JuegoControlador Controlador
-        +CrearControlador()
-        +DetenerJuego()
+        +InstantaneaJuego UltimaFoto
+        +VistaTablero VistaTablero
+        +string MensajeEstado
+        +MostrarMensaje(string, float)
+        +AccionRechazada(string)
+        -ConstruirUiSiFalta()
     }
-    class HUD {
+    class VistaTablero {
         <<MonoBehaviour>>
-        +string Oro, Madera, Comida, Hierro, Piedra, Tiempo
-        +int MensajesDescartados
+        +Inicializar(GestorJuego)
+        +MarcarSeleccion(int, int)
+        +LimpiarSeleccion()
         +Actualizar(InstantaneaJuego)
+        -DibujarRejilla()
     }
-    class MapaVista {
+    class HudRecursos {
         <<MonoBehaviour>>
-        +Actualizar(InstantaneaJuego)
-        +Dibujar(InstantaneaJuego)
+        +Inicializar(GestorJuego)
+        +Actualizar(InstantaneaJuego, GestorJuego)
     }
-    class PanelAcciones {
+    class ControlInputUsuario {
         <<MonoBehaviour>>
-        +Construir()
-        +Entrenar()
-        +Atacar()
-        +RecogerItem()
-    }
-    class PanelRed {
-        <<MonoBehaviour>>
-        +Hospedar(int) bool
-        +Conectar(string, int) bool
+        +Inicializar(GestorJuego)
+        -RecogerItemCercano()
     }
     class PanelFinPartida {
         <<MonoBehaviour>>
-        +string Ganador
-        +Mostrar(InstantaneaJuego)
+        +Inicializar(GestorJuego)
+        +Actualizar(InstantaneaJuego)
+        +Reiniciar()
     }
 
     %% La Vista solo lee y delega en el Controlador
-    ArranqueJuego "1" o-- "1" JuegoControlador : único dueño
-    HUD ..> JuegoControlador : lee
-    MapaVista ..> JuegoControlador : lee
-    PanelAcciones ..> JuegoControlador : acciones
-    PanelRed ..> JuegoControlador : red
-    PanelFinPartida ..> JuegoControlador : estado
-    HUD ..> InstantaneaJuego : lee copia
-    MapaVista ..> InstantaneaJuego : lee copia
+    GestorJuego "1" o-- "1" JuegoControlador : único dueño
+    GestorJuego "1" o-- "1" VistaTablero
+    GestorJuego "1" o-- "1" HudRecursos
+    GestorJuego "1" o-- "1" ControlInputUsuario
+    GestorJuego "1" o-- "1" PanelFinPartida
+    HudRecursos ..> JuegoControlador : lee Instantanea
+    VistaTablero ..> JuegoControlador : Instantanea 1/frame
+    ControlInputUsuario ..> JuegoControlador : Mover/Construir/Entrenar/Atacar/Recoger
+    PanelFinPartida ..> JuegoControlador : Detener en OnDestroy
+    HudRecursos ..> InstantaneaJuego : lee copia
+    VistaTablero ..> InstantaneaJuego : lee copia
     PanelFinPartida ..> InstantaneaJuego : lee copia
 ```
 
@@ -381,6 +410,7 @@ Nota: los casos de uso no son un tipo nativo de Mermaid. Van dos versiones: la d
 flowchart LR
     J(["Jugador"])
     R(["Jugador Rival - segunda instancia"])
+    IA(["IA Enemiga - PVE"])
 
     subgraph SIS["Imperios en Guerra (RTS)"]
         direction TB
@@ -397,6 +427,7 @@ flowchart LR
         UC19(["Declarar ganador - FIN compartido"])
         UC17(["Reconectar si el rival cae"])
         UC18(["Modo Batalla - concurrencia masiva"])
+        UC20(["Partida PVE - jugar contra la IA"])
     end
 
     J --> UC02
@@ -410,12 +441,15 @@ flowchart LR
     J --> UC12
     J --> UC18
     J --> UC04
+    J --> UC20
     R --> UC04
+    IA --> UC20
 
     UC04 -.->|extend| UC17
     UC03 -.->|include - verifica derrota| UC12
     UC06 -.->|include| UC19
     UC07 -.->|include| UC19
+    UC20 -.->|include| UC12
 ```
 
 ### 2.2 Versión formal PlantUML
@@ -599,6 +633,28 @@ sequenceDiagram
     Note over C,C2: Ambas máquinas terminan con el mismo<br/>resultado_final.txt (antes divergían)
 ```
 
+### 3.6 Decisión de la IA (PVE) — Task propia, muta bajo lock
+
+```mermaid
+sequenceDiagram
+    participant CG as GestorJuego (Vista)
+    participant C as JuegoControlador
+    participant S as Simulacion
+    participant IA as IAEnemiga (Task)
+
+    CG->>C: IniciarIA()
+    C->>S: IniciarIA() — crea _ia y lanza BucleDecisionAsync
+    S-->>C: true (IAActiva)
+    Note over IA: cada IntervaloDecisionMs (2000 ms)
+    IA->>IA: DecidirUnaVez() — lee Instantanea() (copia)
+    IA->>S: MoverUnidadIA / IniciarRecoleccionIA
+    IA->>S: ConstruirEdificioIA (Cuartel si no tiene)
+    IA->>S: EntrenarUnidadIA (Soldado si presión < objetivo)
+    S->>S: lock(Candado) en cada método *IA — misma regla que el jugador
+    CG->>C: Instantanea() 1 vez/frame → pinta tropas de la IA
+    Note over CG: Detener() en OnDestroy → _ia.Detener()
+```
+
 ---
 
 ## 4. Mapa de concurrencia
@@ -622,6 +678,7 @@ flowchart TB
         T5["Task: Spawner de items (host)"]
         T6["Task: Expiracion del Casco"]
         T7["Task: Bucle de simulacion (Batalla Nivel 1)"]
+        T8["Task: IA Enemiga (IAEnemiga, PVE)"]
         COLA_OUT["ConcurrentQueue _salientes\n(productor-consumidor)"]
     end
 
@@ -636,8 +693,8 @@ flowchart TB
         LOCK_ENV{{"lock(_lockEnvio)"}}
     end
 
-    T1 & T2 & T3 & T4 & T5 & T6 & T7 -->|"mutan estado"| LOCK
-    T1 & T2 & T3 & T4 & T5 & T6 & T7 -.->|"Transmitir()"| COLA_OUT
+    T1 & T2 & T3 & T4 & T5 & T6 & T7 & T8 -->|"mutan estado"| LOCK
+    T1 & T2 & T3 & T4 & T5 & T6 & T7 & T8 -.->|"Transmitir()"| COLA_OUT
     COLA_OUT -->|"SiguienteSaliente()"| EN
     EN -->|"Enviar()"| LOCK_ENV
     HILO_RED -->|"ReadLine() bloqueante"| COLA_IN
@@ -645,7 +702,7 @@ flowchart TB
     COLA_IN -->|"RecibirMensaje()"| PC
     PC -->|"metodos espejo *Rival"| LOCK
     V -->|"Instantanea()"| LOCK
-    T1 & T2 & T3 & T4 & T5 & T6 & T7 -.->|"RegistrarAccion()"| COLA_LOG
+    T1 & T2 & T3 & T4 & T5 & T6 & T7 & T8 -.->|"RegistrarAccion()"| COLA_LOG
     COLA_LOG --> HILO_LOG -->|"escribe a disco"| DISCO[(configuracion / log / resultado)]
 
     style LOCK fill:#ffe6e6,stroke:#cc0000
@@ -659,7 +716,7 @@ flowchart TB
 
 | Elemento | Cantidad | Detalle |
 |---|---|---|
-| Tasks del Modelo | 7 | reloj, entrenamiento, construcción, recolección, spawner, expiración Casco, bucle de batalla |
+| Tasks del Modelo | 8 | reloj, entrenamiento, construcción, recolección, spawner, expiración Casco, bucle de batalla, **IA enemiga (PVE)** |
 | Hilos (`Thread`) | 2 | escucha TCP (`ConectorRed`) + escritor de logs (`GestorArchivos`) |
 | Candados (`lock`) | 3 | `Simulacion.Candado`, `ConectorRed._lockEnvio`, cola interna de `GestorArchivos` |
 | Colas seguras | 3 | `_salientes`, `_recibidos`, cola de escritura de logs |
@@ -679,18 +736,18 @@ La Vista no calcula reglas; solo dibuja y delega:
 
 ```mermaid
 flowchart LR
-    AR["ArranqueJuego\n(único dueño del JuegoControlador)"] --> JC["JuegoControlador"]
+    GJ["GestorJuego\n(único dueño del JuegoControlador)"] --> JC["JuegoControlador"]
     subgraph VISTA["Vista (Unity) — MonoBehaviour"]
-        HUD["HUD (oro, madera, comida, hierro, piedra, tiempo)"]
-        TILES["MapaVista\n(dibuja 15x15 y entidades)"]
-        UI["PanelAcciones\n(botones → Controlador)"]
-        REDUI["PanelRed\n(Hospedar / Conectar)"]
-        FIN["PanelFinPartida"]
+        HUD["HudRecursos\n(5 recursos + tiempo + mensajes)"]
+        TILES["VistaTablero\n(rejilla 15x15 + entidades)"]
+        IN["ControlInputUsuario\n(clics y teclas QWER/1-4/C/I)"]
+        FIN["PanelFinPartida\n(Reintentar → LoadScene)"]
     end
-    AR --> HUD & TILES & UI & REDUI & FIN
+    GJ --> HUD & TILES & IN & FIN
     HUD & TILES & FIN -->|"Instantanea() 1 vez/frame"| JC
-    UI & REDUI -->|"Mover / Construir / Entrenar / Atacar / Recoger... "| JC
-    TILES -->|"Detener() en OnDestroy"| JC
+    IN -->|"Mover / Construir / Entrenar / Atacar / Recoger "| JC
+    FIN -->|"Detener() en OnDestroy"| JC
+    GJ -.->|"IniciarIA() (PVE)"| JC
 ```
 
 **Contrato de la Vista:**
@@ -698,4 +755,5 @@ flowchart LR
 - `ProcesarMensajesRedPendientes()` se llama en `Update()` (drena la red).
 - `Detener()` se llama en `OnDestroy` / `OnApplicationQuit` (apaga el motor, cierra la red y hace `Flush` de logs).
 - `MensajesDescartados` se muestra en el HUD: si crece, la conexión se cayó (aviso temprano de desync).
-- Los sprites se dibujan mapeando los `enum` (`TipoUnidad`, `TipoEdificio`, `TipoRecurso`, `TipoItem`) a imágenes.
+- Los sprites se dibujan mapeando los `enum` (`TipoUnidad`, `TipoEdificio`, `TipoRecurso`, `TipoItem`) a imágenes (`[SerializeField]` en `VistaTablero`; arte pendiente del compañero — issue #5).
+- Escena mínima: `Assets/Escenas/Juego.unity` (cámara ortográfica + placeholders; la UI se construye por código en `GestorJuego.ConstruirUiSiFalta`).
