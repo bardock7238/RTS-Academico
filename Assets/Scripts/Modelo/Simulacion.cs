@@ -690,11 +690,14 @@ namespace Modelo
                     return Atacar(atacante, enemigo);
                 }
 
-                // Fuera de rango: camina hacia la casilla del rival.
-                CortarRecoleccionYAnunciar(atacante, JugadorLocal);
+                // Destino del combate: con apilamiento puede ser la MISMA casilla
+                // del rival (no hace falta una libre al lado).
                 atacante.LimpiarDestino();
+                atacante.Objetivo = enemigo;
                 atacante.FijarDestino(enemigo.PosicionX, enemigo.PosicionY);
                 atacante.Estado = EstadoUnidad.Moviendo;
+                CortarRecoleccionYAnunciar(atacante, JugadorLocal); // corta mina si la había
+                atacante.FijarDestino(enemigo.PosicionX, enemigo.PosicionY);
                 GestorArchivos.RegistrarAccion(
                     JugadorLocal.Nombre, "Ataque",
                     $"{atacante.Tipo} avanza hacia {enemigo.Tipo} ({enemigo.PosicionX},{enemigo.PosicionY}).");
