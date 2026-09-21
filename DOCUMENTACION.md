@@ -35,6 +35,8 @@ classDiagram
         Madera
         Oro
         Comida
+        Hierro
+        Piedra
     }
     class TipoItem {
         <<enumeration>>
@@ -122,6 +124,8 @@ classDiagram
         +int Oro
         +int Madera
         +int Comida
+        +int Hierro
+        +int Piedra
         +List~Unidad~ Unidades
         +List~Edificio~ Edificios
         +int DefensaBonus
@@ -129,9 +133,9 @@ classDiagram
         +int ItemsRecogidos
         +bool EstaDerrotado
         +bool TieneCentroUrbanoOperativo
-        +PuedePagar(int, int, int) bool
-        +Gastar(int, int, int) bool
-        +Recibir(int, int, int)
+        +PuedePagar(int, int, int, int, int) bool
+        +Gastar(int, int, int, int, int) bool
+        +Recibir(int, int, int, int, int)
         +AgregarUnidad(Unidad)
         +AgregarEdificio(Edificio)
     }
@@ -179,6 +183,8 @@ classDiagram
         +int Oro
         +int Madera
         +int Comida
+        +int Hierro
+        +int Piedra
         +int TiempoJuegoSegundos
         +bool EnEjecucion
         +string GanadorNombre
@@ -221,8 +227,8 @@ classDiagram
         +DetenerBatalla()
         +Detener()
         +MoverUnidadRival(int, int, int, int) Unidad
-        +AplicarAtaqueEnUnidadLocal(int, int, int, int, int) Unidad
-        +AplicarAtaqueEnEdificioLocal(int, int, int, int, int) Edificio
+        +AplicarAtaqueRivalAUnidad(int, int, int, int, int) Unidad
+        +AplicarAtaqueRivalAEdificio(int, int, int, int, int) Edificio
         +CrearEdificioRival(TipoEdificio, int, int) bool
         +CrearUnidadRival(TipoUnidad, int, int) bool
         +CambiarEstadoRecoleccionRival(int, int, bool) bool
@@ -322,7 +328,7 @@ classDiagram
     }
     class HUD {
         <<MonoBehaviour>>
-        +string Oro, Madera, Comida, Tiempo
+        +string Oro, Madera, Comida, Hierro, Piedra, Tiempo
         +int MensajesDescartados
         +Actualizar(InstantaneaJuego)
     }
@@ -513,7 +519,7 @@ sequenceDiagram
     S->>S: Si murió → elimina + VerificarGanador()
 
     CR->>S2: comando ATACAR (ax, ay, bx, by, dano)
-    S2->>S2: lock(Candado) — AplicarAtaqueEnUnidadLocal(...)
+    S2->>S2: lock(Candado) — AplicarAtaqueRivalAUnidad(...)
     S2->>S2: RecibirGolpe(dano) — resta el MISMO daño
     S2->>S2: Si murió → elimina + VerificarGanador()
     Note over S,S2: Las dos copias convergen (mismo daño, mismo resultado)
@@ -675,7 +681,7 @@ La Vista no calcula reglas; solo dibuja y delega:
 flowchart LR
     AR["ArranqueJuego\n(único dueño del JuegoControlador)"] --> JC["JuegoControlador"]
     subgraph VISTA["Vista (Unity) — MonoBehaviour"]
-        HUD["HUD (oro, madera, comida, tiempo)"]
+        HUD["HUD (oro, madera, comida, hierro, piedra, tiempo)"]
         TILES["MapaVista\n(dibuja 15x15 y entidades)"]
         UI["PanelAcciones\n(botones → Controlador)"]
         REDUI["PanelRed\n(Hospedar / Conectar)"]

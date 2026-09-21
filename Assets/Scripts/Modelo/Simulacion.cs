@@ -469,7 +469,7 @@ namespace Modelo
                     GestorArchivos.RegistrarAccion(
                         JugadorLocal.Nombre,
                         "Recolectar",
-                        $"+{cantidad} de {recurso.Tipo}. Total {JugadorLocal.Oro}/{JugadorLocal.Madera}/{JugadorLocal.Comida}");
+                        $"+{cantidad} de {recurso.Tipo}. Total O:{JugadorLocal.Oro} M:{JugadorLocal.Madera} C:{JugadorLocal.Comida} H:{JugadorLocal.Hierro} P:{JugadorLocal.Piedra}");
                 }
             }
 

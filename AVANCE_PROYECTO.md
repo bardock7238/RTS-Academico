@@ -67,7 +67,7 @@ Arreglos aplicados y verificados (Unity compila en batch; validación de escrito
 - **`Assets/Scripts/Modelo/Simulacion.cs`** — el motor del mundo. Concentra TODOS los mecanismos concurrentes:
   - `Candado` (el lock compartido del mundo; toda mutación pasa por `lock(Candado)`).
   - Reloj RTS en tiempo real (`IniciarRelojAsync`), entrenamiento (`EntrenamientoTaskAsync`), construcción (`ConstruccionTaskAsync`), recolección (`RecoleccionTaskAsync`), spawner de items (`IniciarSpawnerItemsAsync`), expiración del Casco (`ExpiracionCascoAsync`) y el bucle de batalla masiva (`IniciarBucleSimulacionAsync`).
-  - Métodos **espejo para la red** (`MoverUnidadRival`, `AplicarAtaqueEnUnidadLocal`, `AplicarAtaqueEnEdificioLocal`, `CrearEdificioRival`, `CrearUnidadRival`, `CambiarEstadoRecoleccionRival`, `ColocarItemRival`, `AplicarRecogidaRival`, `EstablecerNombreRival`).
+  - Métodos **espejo para la red** (`MoverUnidadRival`, `AplicarAtaqueRivalAUnidad`, `AplicarAtaqueRivalAEdificio`, `CrearEdificioRival`, `CrearUnidadRival`, `CambiarEstadoRecoleccionRival`, `ColocarItemRival`, `AplicarRecogidaRival`, `EstablecerNombreRival`).
   - Config de tiempos como **propiedades del Motor** (`CicloRecoleccionMs`, `RelojTickMs`, `IntervaloSpawnerMs`, `DuracionCascoSegundos`, `TickSimulacionMs`, `TicksEntreAtaques`) y esperas como delegados (`EsperarEntrenamiento`, `EsperarConstruccion`) → las pruebas ajustan el Motor, NO el Controlador.
   - **Cola de salida** `ConcurrentQueue` + `Transmitir(...)`: cuando el motor produce algo que hay que anunciar por red (un ataque con su daño calculado, una unidad que terminó de entrenar, un item que apareció solo, un aldeano que terminó solo) lo ENCOLA; el Controlador lo reenvía por TCP desde el hilo principal.
 - **`Controlador/JuegoControlador.cs` = puente delgado: CERO Task, CERO Thread, CERO lock.** Solo: expone el mundo (los objetos vienen del `Motor`), traduce acciones de la Vista → métodos del Motor, traduce mensajes de red → métodos espejo del Motor, y anuncia por red + escribe logs.
@@ -76,7 +76,7 @@ Arreglos aplicados y verificados (Unity compila en batch; validación de escrito
 
 ### CONCURRENCIA VISIBLE (16-sep): Instantánea, Detener y MODO BATALLA (Nivel 1)
 
-- **`Modelo/InstantaneaJuego.cs` + `Simulacion.Instantanea()`** — foto segura del mundo: copia las LISTAS bajo `lock(Candado)` (unidades local/enemigo, edificios, recursos, items + oro/madera/comida/tiempo/ganador). La Vista la llama 1 vez por frame y dibuja desde la copia. Fachada: `JuegoControlador.Instantanea()`.
+- **`Modelo/InstantaneaJuego.cs` + `Simulacion.Instantanea()`** — foto segura del mundo: copia las LISTAS bajo `lock(Candado)` (unidades local/enemigo, edificios, recursos, items + oro/madera/comida/hierro/piedra/tiempo/ganador). La Vista la llama 1 vez por frame y dibuja desde la copia. Fachada: `JuegoControlador.Instantanea()`.
 - **`Simulacion.Detener()` + `JuegoControlador.Detener()`** — apaga el motor al salir de la escena/Play (cancela reloj, spawner, entrenamientos, recolecciones, bucle de batalla; drena la salida y cierra la red; evita la "partida fantasma" y el puerto ocupado en el siguiente Play).
 - **MODO BATALLA (concurrencia masiva, NIVEL 1)** — `Simulacion.IniciarBatalla(unidadesPorLado)`: siembra N unidades por lado con `ControladaPorIA=true` y enciende `BucleActivo`. Un **bucle de simulación** (cada `TickSimulacionMs`, 100 ms) recorre TODAS las unidades dentro de `lock(Candado)`, cada una: busca el rival más cercano, se acerca 1 casilla o golpea con enfriamiento `TicksEntreAtaques`. Los golpes del latido se aplican al final (`AplicarPendientes`) y luego se retiran los muertos y se llama `VerificarGanador()`.
   - **Por qué Nivel 1 (no paralelo):** un solo hilo dentro del candado → sin condiciones de carrera y fácil de razonar. El **Nivel 2** (lotes en `Parallel.For` por workers, sin candado y daños aplicados al final) queda como **optimización futura** para el informe.
@@ -146,7 +146,7 @@ Se validó fuera de Unity (los scripts no usan `UnityEngine`), en proyectos temp
 
 ## Reglas del juego implementadas (resumen)
 
-1. Inicio: jugador con 100 de cada recurso; Mapa 15x15 con 6 yacimientos.
+1. Inicio: jugador con 100 de cada recurso; Mapa 15x15 con 10 yacimientos (6 originales + 2 de Hierro + 2 de Piedra).
 2. Construir: valida coordenada, casilla libre (ambos jugadores), sin yacimiento, y costo del catálogo.
 3. Entrenar: edificio debe estar `Operativo` y poder entrenar ese tipo → paga → espera (Task) → unidad aparece junto al edificio.
 4. Recolectar: aldeano adyacente al yacimiento → suma por ciclo en segundo plano.
@@ -176,7 +176,7 @@ Modelo congelado: estas se documentan y se explican, no se arreglan ("deuda téc
 | M12 | P2 | `ObtenerPosicionDeSalida` recorre O(radio²) y su fallback devuelve la casilla del propio edificio. | Raro en la práctica; se menciona como mejora futura. |
 | M13 | P2 | `configuracion.txt` solo se escribe, nunca se lee. | Pendiente si el requisito pide leer configuración del archivo. |
 | M14 | P3 | Ramas muertas (ternarios que siempre toman una rama). | Cosmético; flujo ya validado arriba. |
-| M15 | P3 | `AplicarAtaque*Local` confían en el rival (no revalidan atacante/rango). | "Asumimos cliente confiable; la seguridad no es requisito". |
+| M15 | P3 | `AplicarAtaqueRivalA*` confían en el rival (no revalidan atacante/rango). | "Asumimos cliente confiable; la seguridad no es requisito". |
 | M16 | P3 | Fórmulas asimétricas: a unidades se envía daño calculado; a edificios, ataque bruto (+ fórmula por lado). | Defendible: los edificios no tienen defensa variable. |
 
 **Decisión de diseño (mirror):** la copia rival "obedece, no opina" (prioriza la convergencia sobre la validez geométrica: dos entidades pueden quedar en la misma casilla en el espejo). Es una frase lista para la defensa.

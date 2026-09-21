@@ -4,7 +4,7 @@ namespace Modelo
 {
     public class Recurso
     {
-        public TipoRecurso Tipo { get; set; }      // "Oro", "Madera", "Comida"
+        public TipoRecurso Tipo { get; set; }      // "Oro", "Madera", "Comida", "Hierro", "Piedra"
         public int Cantidad { get; set; }          // Cantidad restante para recolectar
         public int CantidadMaxima { get; set; }    // Cantidad inicial (para la barra de progreso de la Vista)
         public int PosicionX { get; set; }

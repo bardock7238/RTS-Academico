@@ -225,7 +225,7 @@ namespace Modelo
             return CrearEdificio(TipoEdificio.CentroUrbano, x, y, operativo: true);
         }
 
-        // Distribución inicial de recursos del mapa (AOE: oro, madera y comida).
+        // Distribución inicial de recursos del mapa (oro, madera, comida, hierro y piedra).
         public static List<Recurso> CrearRecursosIniciales()
         {
             return new List<Recurso>

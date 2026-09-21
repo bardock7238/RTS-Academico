@@ -27,3 +27,8 @@ resultado_final.txt
 
 # Guía de estudio (solo local)
 GUIA_ESTUDIO.md
+
+# Artefactos generados / locales
+.gemini/
+DOCUMENTACION.pdf
+informe_revision.md
