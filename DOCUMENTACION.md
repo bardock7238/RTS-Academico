@@ -149,6 +149,8 @@ classDiagram
         +CasillaTieneRecurso(int, int) bool
         +EsCasillaLibre(int, int, List~Unidad~, List~Edificio~) bool
         +EsCasillaLibre(int, int, Jugador, Jugador) bool
+        +EsTransitable(int, int, List~Edificio~) bool
+        +EsTransitable(int, int, Jugador, Jugador) bool
         +EsCasillaEdificable(int, int, Jugador, Jugador) bool
         +SeSolapan(Unidad, Edificio) bool
     }
@@ -225,6 +227,7 @@ classDiagram
         +IniciarRecoleccionIA(Unidad, Recurso) bool
         +DetenerRecoleccion(Unidad) bool
         +Atacar(Unidad, Unidad) bool
+        +MoverAAtacar(Unidad, Unidad) bool
         +AtacarEdificio(Unidad, Edificio) bool
         +ColocarItem(TipoItem, int, int) bool
         +RecogerItem(Unidad, Item) bool
@@ -297,6 +300,7 @@ classDiagram
         +IniciarRecoleccion(Unidad, Recurso) bool
         +DetenerRecoleccion(Unidad) bool
         +Atacar(Unidad, Unidad) bool
+        +MoverAAtacar(Unidad, Unidad) bool
         +AtacarEdificio(Unidad, Edificio) bool
         +ColocarItem(TipoItem, int, int, bool) bool
         +RecogerItem(Unidad, Item) bool

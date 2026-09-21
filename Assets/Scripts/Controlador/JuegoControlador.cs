@@ -96,6 +96,11 @@ namespace Controlador
         // 5. Atacar / 5b. Atacar Edificio. El daño se calcula DENTRO del Modelo y
         // su evento lo anuncia por red con los datos exactos que se aplicarán.
         public bool Atacar(Unidad atacante, Unidad enemigo) => Motor.Atacar(atacante, enemigo);
+
+        // [Combate] Clic en enemigo: si está en rango pega; si no, la unidad
+        // CAMINA hacia él (objetivo fijado) y pega sola al estar a golpe.
+        public bool MoverAAtacar(Unidad atacante, Unidad enemigo) => Motor.MoverAAtacar(atacante, enemigo);
+
         public bool AtacarEdificio(Unidad atacante, Edificio edificioEnemigo) => Motor.AtacarEdificio(atacante, edificioEnemigo);
 
         public void VerificarGanador() => Motor.VerificarGanador();

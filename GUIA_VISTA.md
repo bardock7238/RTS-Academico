@@ -191,8 +191,9 @@ ctrl.IniciarRecoleccion(aldeano, recurso);    // → bool
 ctrl.DetenerRecoleccion(aldeano);             // → bool
 ctrl.EstaRecolectando(aldeano);               // → bool (para colorear el sprite)
 
-// Atacar
-ctrl.Atacar(miUnidad, unidadEnemiga);         // → bool
+// Atacar (si está lejos, la unidad CAMINA hasta el rango y sigue pegando)
+ctrl.MoverAAtacar(miUnidad, unidadEnemiga);     // → bool (acepta aunque no esté en rango)
+ctrl.Atacar(miUnidad, unidadEnemiga);            // → bool (solo si ya está en rango)
 ctrl.AtacarEdificio(miUnidad, edificioEnemigo); // → bool
 
 // Items

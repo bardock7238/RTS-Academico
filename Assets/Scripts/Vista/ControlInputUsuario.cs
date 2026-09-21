@@ -152,14 +152,26 @@ namespace Vista
                     }
                 }
 
-                // Enemigo en la casilla → atacar.
+                // Enemigo (cualquier casilla) → MoverAAtacar: si ya está en rango
+                // pega; si no, la unidad CAMINA hacia él hasta poder golpear.
                 foreach (Unidad e in foto.UnidadesEnemigo)
                 {
                     if (e.PosicionX == x && e.PosicionY == y && e.EstaViva)
                     {
-                        bool ok = _gestor.Controlador.Atacar(_seleccionada, e);
-                        if (ok) _gestor.MostrarMensaje($"Atacando {e.Tipo}");
-                        else _gestor.AccionRechazada($"atacar {e.Tipo} (¿rango?)");
+                        bool ok = _gestor.Controlador.MoverAAtacar(_seleccionada, e);
+                        if (ok)
+                        {
+                            int d = Mathf.Abs(_seleccionada.PosicionX - e.PosicionX)
+                                  + Mathf.Abs(_seleccionada.PosicionY - e.PosicionY);
+                            if (d <= _seleccionada.RangoAtaque)
+                                _gestor.MostrarMensaje($"Atacando {e.Tipo}");
+                            else
+                            {
+                                _gestor.MostrarMensaje($"Yendo a atacar {e.Tipo}...");
+                                _gestor.VistaTablero?.MarcarSeleccion(e.PosicionX, e.PosicionY);
+                            }
+                        }
+                        else _gestor.AccionRechazada($"atacar {e.Tipo}");
                         return;
                     }
                 }
@@ -174,8 +186,10 @@ namespace Vista
                     }
                 }
 
-                // Casilla vacía/en propia → caminar hasta ahí (sin teletransporte).
+                // Mover con unidad seleccionada y clic en casilla vacía/en propia:
+                // corta objetivo de combate y camina (sin teletransporte).
                 _modoRecoger = false;
+                if (_seleccionada != null) _seleccionada.Objetivo = null;
                 bool movio = _gestor.Controlador.MoverUnidad(_seleccionada, x, y);
                 if (movio)
                 {

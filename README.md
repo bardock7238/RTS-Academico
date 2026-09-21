@@ -61,7 +61,9 @@ el Modelo.
 ## Controles (Vista mínima)
 
 - Clic izq: seleccionar unidad · clic con unidad: contextual (item → va a
-  recogerlo, yacimiento con aldeano → recolecta, enemigo → atacar, vacío → caminar).
+  recogerlo, yacimiento con aldeano → recolecta, enemigo → **ataca** (si lejos
+  camina hasta el rango y sigue pegando), vacío → caminar). Unidades **apilables**
+  en la misma casilla (solo edificios bloquean el paso).
 - `QWER`: entrenar (Aldeano, Soldado, Arquero, Caballero).
 - `1-4`: construir (Casa, Cuartel, Torre, Centro Urbano).
 - `C`: modo recoger — clic en un **yacimiento o item** y la unidad **caminará

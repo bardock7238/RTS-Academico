@@ -154,6 +154,8 @@ namespace Modelo
                 // [Movimiento] Viaje completo: el aldeano camina solo hasta el
                 // yacimiento (MoverARecolectarIA) y la recolección arranca al llegar
                 // (LlegarADestino). Si ya está adyacente, empieza ya mismo.
+                // Varias celdas alrededor del yacimiento → los aldeanos se apilan
+                // juntos sin bloquearse (EsTransitable ignora unidades).
                 _mundo.MoverARecolectarIA(aldeano, mejor);
             }
         }

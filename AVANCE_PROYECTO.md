@@ -85,7 +85,33 @@ y añadir arte temporal:
 - **Mapa 30×30 + ~17 yacimientos** (4 cuadrantes + central), spawner de ítems cada 15 s con `MaxItemsEnMapa = 8`, controles unificados a **clic izquierdo** (el derecho también actúa), botones `Recoger [C]` y `Item [I]` en la barra (1040 px); C = modo dual yacimiento/item con autoselección de aldeano; clic directo en yacimiento con aldeano también recolecta (sin modo previo).
 - **Verificación**: compilación COMPLETA (Modelo+Controlador+Vista) contra las DLLs de Unity 6000.6.0f1 → **0 errores, 0 avisos**; suites de escritorio **rts-pve-test 23 OK, 0 fallos** (incluye: caminar rodeando obstáculos, no teletransporta, cancelar viaje, recoger ítem al llegar, recolección por viaje, empate de batalla) y **rts-red-test 8 OK, 0 fallos**.
 
-### REVISIÓN EXTERNA + ARREGLOS DE ROBUSTEZ (19-sep) — Modelo FROZEN
+### COLISIONES APILABLES + ATAQUE CON APROXIMACIÓN (21-sep, noche)
+
+Feedback del usuario jugando: "cuando me atacaban no me pegaban" y "los aldeanos se
+bloquean entre sí; quiero que 10 aldeanos se apilen y se vean épicos":
+
+- **Modelo / `Mapa.EsTransitable`**: nueva regla de camino — solo los **edificios**
+  bloquean; las **unidades no** (pueden compartir casilla). Se usa en:
+  `IntentarPasoA`, `SiguientePasoBFS`, `IntentarPaso` (IA), `MoverUnidadPara`
+  (destino), `CasillaLibreJuntoA`, `ObtenerPosicionDeSalida`, espejo `MoverUnidadRival`
+  y spawn de batalla. `EsCasillaLibre` se mantiene para **construir/colocar items**
+  (ahí sí importa quién pisa la casilla).
+- **Efecto**: multitudes de aldeanos ya no se tapan el paso; todos llegan al mismo
+  yacimiento y quedan **apilados**; las tropas avanzan sin estancarse en corredores.
+- **Combate del jugador (`MoverAAtacar`)**: clic en enemigo → si está en rango pega
+  (con `TiempoEsperaAtaque`); si no, fija `Objetivo` + destino a la casilla del rival
+  y **camina solo** hasta estar a golpe (`ProcesarObjetivoDe` en el latido de
+  movimiento, con o sin `BucleActivo`). Así "clic = atacar" siempre termina en golpes.
+- **IA**: `ProcesarUnidadTactica` ya no exige solo `ControladaPorIA` para el
+  enfriamiento; las unidades del jugador solo pelean si el jugador fijó objetivo.
+- **Vista (`DibujarUnidad`)**: cuenta unidades por casilla y las dibuja en un
+  **círculo con offset** (radio ~0.28–0.34, escala ligeramente menor si hay pila)
+  → 10 aldeanos en la misma casilla se ven todos, "épicos", no uno tapando al otro.
+- **Controlador**: API `MoverAAtacar(Unidad, Unidad)`; input usa ese flujo en vez
+  de `Atacar` directo (que solo servía si ya estabas en rango).
+- **Enfriamiento unificado**: `Atacar`/`AtacarEdificio` ponen `TiempoEsperaAtaque`;
+  baja en `AvanzarDestinos` y en `ProcesarUnidadTactica`.
+- **Verificación**: suites de escritorio (ver más abajo).
 
 Se hizo una revisión a fondo de arquitectura y se aplicaron los arreglos de red/concurrencia. **El Modelo queda CONGELADO** (no se le cambia más la lógica; priorizamos explicar en la defensa sobre seguir tocándolo).
 

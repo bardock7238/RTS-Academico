@@ -48,6 +48,23 @@ namespace Modelo
             return EsCasillaLibre(x, y, unidades, edificios);
         }
 
+        // [Apilamiento] Una casilla es TRANSITABLE si está en el mapa y no hay un
+        // edificio encima. Las UNIDADES no bloquean: pueden apilarse en la misma
+        // casilla (tropas épicas, aldeanos amontonados en el yacimiento) y así
+        // nadie se queda sin camino por un amigo de paso.
+        public bool EsTransitable(int x, int y, List<Edificio> edificios)
+        {
+            if (!EsCoordenadaValida(x, y)) return false;
+            if (edificios.Any(e => e.PosicionX == x && e.PosicionY == y)) return false;
+            return true;
+        }
+
+        public bool EsTransitable(int x, int y, Jugador jugadorLocal, Jugador jugadorEnemigo)
+        {
+            var edificios = jugadorLocal.Edificios.Concat(jugadorEnemigo.Edificios).ToList();
+            return EsTransitable(x, y, edificios);
+        }
+
         // Para construir: además de estar libre, no debe haber un yacimiento de recursos.
         public bool EsCasillaEdificable(int x, int y, Jugador jugadorLocal, Jugador jugadorEnemigo)
         {

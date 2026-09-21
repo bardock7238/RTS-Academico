@@ -128,11 +128,31 @@ namespace Vista
             foreach (Edificio e in foto.EdificiosLocal)
                 DibujarEdificio(e, colorLocal);
 
-            // Unidades
-            foreach (Unidad u in foto.UnidadesEnemigo)
-                DibujarUnidad(u, colorEnemigo);
-            foreach (Unidad u in foto.UnidadesLocal)
-                DibujarUnidad(u, colorLocal);
+            // Unidades: primero cuenta cuántas hay en cada casilla para poder
+            // "apilarlas" con un offset (10 aldeanos juntos se ven épicos, no
+            // uno encima del otro invisible).
+            var porCasilla = new Dictionary<(int, int), int>();
+            var todas = new List<Unidad>();
+            foreach (Unidad u in foto.UnidadesEnemigo) todas.Add(u);
+            foreach (Unidad u in foto.UnidadesLocal) todas.Add(u);
+            foreach (Unidad u in todas)
+            {
+                if (u == null || !u.EstaViva) continue;
+                var clave = (u.PosicionX, u.PosicionY);
+                porCasilla.TryGetValue(clave, out int n);
+                porCasilla[clave] = n + 1;
+            }
+            var vistos = new Dictionary<(int, int), int>();
+            foreach (Unidad u in todas)
+            {
+                if (u == null) continue;
+                Color equipo = foto.UnidadesLocal.Contains(u) ? colorLocal : colorEnemigo;
+                var clave = (u.PosicionX, u.PosicionY);
+                vistos.TryGetValue(clave, out int idx);
+                vistos[clave] = idx + 1;
+                porCasilla.TryGetValue(clave, out int n);
+                DibujarUnidad(u, equipo, idx, n);
+            }
 
             // Resaltado de selección (anillo detrás de la entidad).
             if (_haySeleccion)
@@ -192,7 +212,7 @@ namespace Vista
                 Color.Lerp(equipo, ColoresEdificio[(int)e.Tipo], 0.45f), 1f, alfa);
         }
 
-        private void DibujarUnidad(Unidad u, Color equipo)
+        private void DibujarUnidad(Unidad u, Color equipo, int indiceEnCasilla, int totalEnCasilla)
         {
             Color baseC = ColoresUnidad[(int)u.Tipo];
             Color c = Color.Lerp(baseC, equipo, 0.35f);
@@ -200,6 +220,17 @@ namespace Vista
             // [Fluidez] Interpola entre latidos del Modelo (1 celda/100 ms = 10
             // celdas/s): el sprite se desliza en vez de teletransportarse.
             Vector3 meta = PosMundo(u.PosicionX, u.PosicionY);
+
+            // [Apilamiento] Varias unidades en la misma casilla: las reparte en
+            // un círculo pequeño para que se vean TODAS (pila épica, no un pixel).
+            if (totalEnCasilla > 1)
+            {
+                float angulo = (Mathf.PI * 2f * indiceEnCasilla) / totalEnCasilla;
+                float radio = 0.28f * tamanoCasilla * Mathf.Sqrt(totalEnCasilla);
+                if (totalEnCasilla > 6) radio = 0.34f * tamanoCasilla;
+                meta += new Vector3(Mathf.Cos(angulo) * radio, Mathf.Sin(angulo) * radio, 0f);
+            }
+
             Vector3 pos;
             if (!_posSuave.TryGetValue(u, out pos))
             {
@@ -212,7 +243,10 @@ namespace Vista
             }
             _posSuave[u] = pos;
 
-            Dibujar(pos, SpriteDe(spritesUnidad, (int)u.Tipo, spriteItem), c, 1.15f, u.EstaViva ? 1f : 0.3f);
+            // Ligeramente más chica si hay pila, para que no se tapen del todo.
+            float escala = totalEnCasilla > 4 ? 1.0f : 1.15f;
+            if (totalEnCasilla > 1) escala = Mathf.Lerp(1.15f, 0.95f, Mathf.Clamp01((totalEnCasilla - 1) / 8f));
+            Dibujar(pos, SpriteDe(spritesUnidad, (int)u.Tipo, spriteItem), c, escala, u.EstaViva ? 1f : 0.3f);
         }
 
         private void Dibujar(int x, int y, Sprite sp, Color color, float escala, float alfa) =>
