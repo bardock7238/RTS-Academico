@@ -127,23 +127,19 @@ namespace Vista
             if (Input.GetKeyDown(KeyCode.I)) RecogerItemCercano();
             if (Input.GetKeyDown(KeyCode.Escape))
             {
-                // Con unidad caminando, la primera Escape corta el viaje (la
-                // mantiene seleccionada); la siguiente limpia la selección.
+                // Escape SIEMPRE deselecciona; si había viajes, también los corta.
                 bool canceloViaje = false;
                 foreach (Unidad u in _seleccionadas)
                     if (u.TieneDestino && _gestor.Controlador.CancelarDestino(u))
                         canceloViaje = true;
-                if (canceloViaje)
-                {
-                    _gestor.MostrarMensaje("Viaje cancelado");
-                    return;
-                }
                 _modoConstruccion = null;
                 _modoRecoger = false;
                 LimpiarUnidadesSeleccionadas();
                 _edificioSeleccionado = null;
                 _gestor.VistaTablero?.LimpiarSeleccion();
-                _gestor.MostrarMensaje("Seleccion cancelada");
+                _gestor.MostrarMensaje(canceloViaje
+                    ? "Viajes cancelados y selección limpia"
+                    : "Selección cancelada (Escape)");
             }
         }
 
@@ -239,7 +235,7 @@ namespace Vista
                         _gestor.MostrarMensaje($"Caminando a {DatosDelJuego.NombreDe(itemClic.Tipo)} ({itemClic.PosicionX},{itemClic.PosicionY})...");
                         _gestor.VistaTablero?.MarcarSeleccion(itemClic.PosicionX, itemClic.PosicionY);
                     }
-                    else _gestor.AccionRechazada("recoger item");
+                    else _gestor.AccionRechazada($"recoger item: {MotivoItem(foto, itemClic)}");
                     return;
                 }
 
@@ -268,7 +264,7 @@ namespace Vista
                             _gestor.VistaTablero?.MarcarSeleccion(r.PosicionX, r.PosicionY);
                         }
                     }
-                    else if (nAldeanos > 0) _gestor.AccionRechazada($"recolectar {r.Tipo}");
+                    else if (nAldeanos > 0) _gestor.AccionRechazada($"recolectar {r.Tipo}: {MotivoRecolectar(foto, r)}");
                     else _gestor.MostrarMensaje("Selecciona aldeanos para recolectar");
                     return;
                 }
@@ -286,7 +282,11 @@ namespace Vista
                             _gestor.MostrarMensaje($"Yendo a atacar {e.Tipo} ({nOk} unidades)...");
                             _gestor.VistaTablero?.MarcarSeleccion(e.PosicionX, e.PosicionY);
                         }
-                        else _gestor.AccionRechazada($"atacar {e.Tipo}");
+                        else
+                        {
+                            Unidad pri = _seleccionadas[0];
+                            _gestor.AccionRechazada($"atacar {e.Tipo}: {MotivoAtacar(pri, e)}");
+                        }
                         return;
                     }
                 }
@@ -298,7 +298,17 @@ namespace Vista
                         foreach (Unidad u in _seleccionadas)
                             if (_gestor.Controlador.AtacarEdificio(u, e)) nOk++;
                         if (nOk > 0) _gestor.MostrarMensaje($"Atacando {e.Tipo} ({nOk} unidades)");
-                        else _gestor.AccionRechazada($"atacar {e.Tipo} (¿rango?)");
+                        else
+                        {
+                            Unidad pri = _seleccionadas[0];
+                            int d = Mathf.Abs(pri.PosicionX - e.PosicionX)
+                                  + Mathf.Abs(pri.PosicionY - e.PosicionY);
+                            string m = !pri.PuedeAtacar ? "los aldeanos no atacan"
+                                : !e.EstaViva ? "edificio ya destruido"
+                                : d > pri.RangoAtaque ? $"fuera de rango (distancia {d}, rango {pri.RangoAtaque})"
+                                : "no se pudo atacar";
+                            _gestor.AccionRechazada($"atacar {e.Tipo}: {m}");
+                        }
                         return;
                     }
                 }
@@ -320,7 +330,7 @@ namespace Vista
                 }
                 else if (rechazadas > 0)
                 {
-                    _gestor.AccionRechazada($"mover a ({x},{y})");
+                    _gestor.AccionRechazada($"mover a ({x},{y}): {MotivoMover(foto, x, y)}");
                 }
                 return;
             }
@@ -347,7 +357,8 @@ namespace Vista
             bool ok = _gestor.Controlador.MoverARecogerItem(_seleccionada, item);
             if (!ok)
             {
-                _gestor.AccionRechazada("recoger item");
+                var f = _gestor.UltimaFoto;
+                _gestor.AccionRechazada($"recoger item: {(f != null ? MotivoItem(f, item) : "no se pudo")}");
                 return;
             }
 
@@ -419,7 +430,7 @@ namespace Vista
                 _gestor.MostrarMensaje($"Caminando a {r.Tipo} ({r.PosicionX},{r.PosicionY})...");
                 _gestor.VistaTablero?.MarcarSeleccion(r.PosicionX, r.PosicionY);
             }
-            else _gestor.AccionRechazada($"recolectar {r.Tipo}");
+            else _gestor.AccionRechazada($"recolectar {r.Tipo}: {MotivoRecolectar(foto, r)}");
             return true;
         }
 
@@ -518,7 +529,7 @@ namespace Vista
             if (_seleccionada != null)
                 _gestor.VistaTablero?.MarcarSeleccion(_seleccionada.PosicionX, _seleccionada.PosicionY);
             else
-                _gestor.AccionRechazada("recoger: no hay unidades vivas");
+                _gestor.AccionRechazada($"recoger item: {(foto != null ? MotivoItem(foto, null) : "no hay unidades vivas")}");
         }
 
         // C: modo recoger (yacimiento/item). Sin selección autoselecciona un
@@ -684,11 +695,93 @@ namespace Vista
             return "no se pudo (¿partida pausada o terminada?)";
         }
 
+        // Motivos de rechazo (la Vista solo lee la foto / objetos de la foto).
+        private static string MotivoMover(InstantaneaJuego foto, int x, int y)
+        {
+            if (x < 0 || y < 0 || x >= Mapa.Ancho || y >= Mapa.Alto)
+                return "fuera del mapa";
+            foreach (Edificio e in foto.EdificiosLocal)
+                if (e.PosicionX == x && e.PosicionY == y)
+                    return $"casilla ocupada por {e.Tipo}";
+            foreach (Edificio e in foto.EdificiosEnemigo)
+                if (e.PosicionX == x && e.PosicionY == y)
+                    return $"casilla ocupada por {e.Tipo}";
+            if (!foto.EnEjecucion)
+                return "partida pausada o terminada";
+            return "no se pudo mover";
+        }
+
+        private static string MotivoRecolectar(InstantaneaJuego foto, Recurso r)
+        {
+            if (r == null) return "sin yacimiento";
+            if (r.EstaAgotado) return "yacimiento agotado";
+            bool hayAldeano = false;
+            foreach (Unidad u in foto.UnidadesLocal)
+                if (u.EstaViva && u.EsRecolector) { hayAldeano = true; break; }
+            if (!hayAldeano) return "no hay aldeanos vivos";
+            if (!foto.EnEjecucion) return "partida pausada o terminada";
+            return "sin hueco libre junto al yacimiento";
+        }
+
+        private static string MotivoItem(InstantaneaJuego foto, Item item)
+        {
+            if (item != null && item.Recogido) return "item ya recogido";
+            bool hayUnidad = false;
+            foreach (Unidad u in foto.UnidadesLocal)
+                if (u.EstaViva) { hayUnidad = true; break; }
+            if (!hayUnidad) return "no hay unidades vivas";
+            if (!foto.EnEjecucion) return "partida pausada o terminada";
+            return item != null ? "sin hueco junto al item" : "no hay unidades vivas";
+        }
+
+        private static string MotivoAtacar(Unidad atacante, Unidad enemigo)
+        {
+            if (enemigo == null || !enemigo.EstaViva) return "objetivo ya muerto";
+            if (!atacante.PuedeAtacar) return "los aldeanos no atacan";
+            int d = Mathf.Abs(atacante.PosicionX - enemigo.PosicionX)
+                  + Mathf.Abs(atacante.PosicionY - enemigo.PosicionY);
+            if (d > atacante.RangoAtaque)
+                return $"fuera de rango (distancia {d}, rango {atacante.RangoAtaque})";
+            if (atacante.TiempoEsperaAtaque > 0) return "enfriamiento de ataque";
+            return "no se pudo atacar";
+        }
+
+        private static string MotivoEntrenar(InstantaneaJuego foto, TipoUnidad tipo, TipoEdificio en)
+        {
+            bool hayTipo = false, hayOperativo = false;
+            foreach (Edificio e in foto.EdificiosLocal)
+            {
+                if (e.Tipo != en || !e.EstaViva) continue;
+                hayTipo = true;
+                if (e.Estado == EstadoEdificio.Operativo) hayOperativo = true;
+            }
+            if (!hayTipo) return $"no tienes {en}";
+            if (!hayOperativo) return $"{en} aún en construcción";
+            if (!DatosDelJuego.EdificiosBase[en].UnidadesEntrenables.Contains(tipo))
+                return $"{en} no entrena {tipo}";
+
+            UnidadConfig cfg = DatosDelJuego.UnidadesBase[tipo];
+            var faltan = new List<string>();
+            if (foto.Madera < cfg.CostoMadera) faltan.Add($"Madera {foto.Madera}/{cfg.CostoMadera}");
+            if (foto.Oro < cfg.CostoOro) faltan.Add($"Oro {foto.Oro}/{cfg.CostoOro}");
+            if (foto.Comida < cfg.CostoComida) faltan.Add($"Comida {foto.Comida}/{cfg.CostoComida}");
+            if (foto.Hierro < cfg.CostoHierro) faltan.Add($"Hierro {foto.Hierro}/{cfg.CostoHierro}");
+            if (foto.Piedra < cfg.CostoPiedra) faltan.Add($"Piedra {foto.Piedra}/{cfg.CostoPiedra}");
+            if (faltan.Count > 0) return $"falta {string.Join(", ", faltan)}";
+
+            if (!foto.EnEjecucion) return "partida pausada o terminada";
+            return "ya hay un entrenamiento de ese tipo en curso";
+        }
+
         private void Entrenar(TipoUnidad tipo, TipoEdificio en)
         {
             bool ok = _gestor.Controlador.EntrenarUnidad(tipo, en);
             if (ok) _gestor.MostrarMensaje($"Entrenando {tipo} en {en}");
-            else _gestor.AccionRechazada($"entrenar {tipo} en {en}");
+            else
+            {
+                var f = _gestor.UltimaFoto;
+                _gestor.AccionRechazada($"entrenar {tipo} en {en}: {(f != null ? MotivoEntrenar(f, tipo, en) : "no se pudo")}");
+            }
         }
 
         // Botones de acción en la barra inferior (placeholder; issue #6/#9 los embellece).

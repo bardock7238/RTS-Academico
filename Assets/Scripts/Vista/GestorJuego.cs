@@ -116,7 +116,8 @@ namespace Vista
 
         public void AccionRechazada(string accion)
         {
-            MostrarMensaje($"No se pudo: {accion}");
+            // Rechazos más visibles: más tiempo para leer el motivo.
+            MostrarMensaje($"No se pudo: {accion}", 6f);
         }
 
         // Si la escena no trae HUD (bootstrap mínimo), la Vista crea su propia UI
