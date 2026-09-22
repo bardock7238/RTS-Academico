@@ -28,6 +28,10 @@ namespace Vista
         public string MensajeEstado { get; private set; }
         private float _mensajeHasta;
 
+        // Estado fijo de la selección actual (vivo cada frame; no caduca).
+        // La barra lo muestra cuando no hay mensaje efímero encima.
+        public string EstadoSeleccion { get; set; }
+
         private static GestorJuego _instancia;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]

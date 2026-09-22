@@ -52,7 +52,13 @@ namespace Vista
             }
 
             if (txtMensaje != null)
-                txtMensaje.text = gestor != null ? gestor.MensajeEstado : null;
+            {
+                // Mensaje efímero (2.5s) manda; si no hay, se ve el estado de
+                // la selección (Recolectando, Moviendo...) hasta que cambie.
+                string m = gestor != null ? gestor.MensajeEstado : null;
+                if (string.IsNullOrEmpty(m) && gestor != null) m = gestor.EstadoSeleccion;
+                txtMensaje.text = m;
+            }
         }
 
         private void ConstruirSiFalta()

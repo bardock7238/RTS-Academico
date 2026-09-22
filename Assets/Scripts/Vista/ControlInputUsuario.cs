@@ -23,9 +23,22 @@ namespace Vista
             ConstruirBotonesSiFaltan();
         }
 
+        // Estado de la selección SIEMPRE visible en la barra (se refresca cada
+        // frame: Recolectando, Moviendo, Atacando...). Caduca solo el mensaje efímero.
+        private void ActualizarEstadoSeleccion()
+        {
+            if (_seleccionada != null && _seleccionada.EstaViva)
+                _gestor.EstadoSeleccion = $"Seleccionado: {_seleccionada.Tipo} ({_seleccionada.Estado})";
+            else if (_edificioSeleccionado != null)
+                _gestor.EstadoSeleccion = $"Edificio: {_edificioSeleccionado.Tipo} ({_edificioSeleccionado.Estado})";
+            else
+                _gestor.EstadoSeleccion = null;
+        }
+
         private void Update()
         {
             if (_gestor == null || _gestor.Controlador == null) return;
+            ActualizarEstadoSeleccion();
             if (SobreUi()) return;
 
             if (Input.GetMouseButtonDown(0) || Input.GetMouseButtonDown(1))
