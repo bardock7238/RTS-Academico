@@ -1336,14 +1336,20 @@ namespace Modelo
 
             if (recurso != null)
             {
-                if (IniciarRecoleccionPara(u, recurso, dueno) && dueno == JugadorLocal)
+                if (IniciarRecoleccionPara(u, recurso, dueno))
                 {
-                    Transmitir($"RECOLECTAR;{u.PosicionX};{u.PosicionY};1");
+                    if (dueno == JugadorLocal)
+                        Transmitir($"RECOLECTAR;{u.PosicionX};{u.PosicionY};1");
+                    return; // Recolectando
                 }
-                return; // IniciarRecoleccionPara puso Recolectando (o seguía Idle si falló)
+                // Falló (agotado / ya ocupado): NO se queda en Moviendo.
             }
 
-            if (u.Estado == EstadoUnidad.Moviendo && u.Objetivo == null) u.Estado = EstadoUnidad.Idle;
+            // Viaje terminado (o falló la acción pendiente): si aún figura
+            // caminando y no está atacando, vuelve a quieto para que la barra
+            // deje de mostrar "Moviendo" en cuanto el aldeano acabe de caminar.
+            if (u.Estado == EstadoUnidad.Moviendo)
+                u.Estado = EstadoUnidad.Idle;
         }
 
         // Un latido del mundo: avanzar TODAS las unidades de IA y aplicar los golpes.

@@ -106,6 +106,14 @@ namespace Vista
             _mensajeHasta = Time.unscaledTime + segundos;
         }
 
+        // Borra el mensaje efímero YA (sin esperar a que caduque): p. ej. al
+        // llegar de caminar se quita "Caminando a..." y se ve el estado real.
+        public void LimpiarMensaje()
+        {
+            MensajeEstado = null;
+            _mensajeHasta = 0f;
+        }
+
         public void AccionRechazada(string accion)
         {
             MostrarMensaje($"No se pudo: {accion}");

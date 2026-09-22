@@ -26,9 +26,7 @@ namespace Vista
         private readonly List<SpriteRenderer> _pool = new List<SpriteRenderer>();
         private int _uso;
         private GestorJuego _gestor;
-        private int _ultimoSeleccionX = int.MinValue;
-        private int _ultimoSeleccionY = int.MinValue;
-        private bool _haySeleccion;
+        private readonly List<(int X, int Y)> _seleccion = new List<(int, int)>();
 
         // [Fluidez] Ultima posicion pintada de cada unidad: el Modelo late cada
         // 100 ms (1 celda/s) y aqui se interpola hacia la casilla destino para
@@ -88,14 +86,22 @@ namespace Vista
 
         public void MarcarSeleccion(int x, int y)
         {
-            _haySeleccion = true;
-            _ultimoSeleccionX = x;
-            _ultimoSeleccionY = y;
+            _seleccion.Clear();
+            _seleccion.Add((x, y));
+        }
+
+        // Selección múltiple: resalta todas las casillas de la tropa elegida.
+        public void MarcarSelecciones(IList<(int X, int Y)> celdas)
+        {
+            _seleccion.Clear();
+            if (celdas == null) return;
+            for (int i = 0; i < celdas.Count; i++)
+                _seleccion.Add(celdas[i]);
         }
 
         public void LimpiarSeleccion()
         {
-            _haySeleccion = false;
+            _seleccion.Clear();
         }
 
         public void Actualizar(InstantaneaJuego foto)
@@ -154,11 +160,11 @@ namespace Vista
                 DibujarUnidad(u, equipo, idx, n);
             }
 
-            // Resaltado de selección (anillo detrás de la entidad).
-            if (_haySeleccion)
+            // Resaltado de selección (anillo detrás de cada entidad elegida).
+            for (int s = 0; s < _seleccion.Count; s++)
             {
                 var fondo = Obtener();
-                fondo.transform.position = PosMundo(_ultimoSeleccionX, _ultimoSeleccionY) + new Vector3(0, 0, 0.1f);
+                fondo.transform.position = PosMundo(_seleccion[s].X, _seleccion[s].Y) + new Vector3(0, 0, 0.1f);
                 var sr = fondo.GetComponent<SpriteRenderer>();
                 sr.sprite = spriteTile != null ? spriteTile : ObtenerSpriteBlanco();
                 sr.color = new Color(1f, 1f, 0.3f, 0.35f);

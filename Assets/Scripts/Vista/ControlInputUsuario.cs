@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
@@ -11,11 +12,17 @@ namespace Vista
     public class ControlInputUsuario : MonoBehaviour
     {
         private GestorJuego _gestor;
-        private Unidad _seleccionada;
+        // Selección múltiple: clic derecho AÑADE aldeanos/tropas al grupo.
+        private readonly List<Unidad> _seleccionadas = new List<Unidad>();
+        private Unidad _seleccionada => _seleccionadas.Count > 0 ? _seleccionadas[0] : null;
         private Edificio _edificioSeleccionado;
 
         private TipoEdificio? _modoConstruccion;
         private bool _modoRecoger; // C: próximo clic = yacimiento o item; la unidad va sola
+
+        // Último estado visto en la selección (para detectar "dejó de caminar").
+        private Unidad _estadoPrevioDe;
+        private EstadoUnidad _estadoPrevio;
 
         public void Inicializar(GestorJuego gestor)
         {
@@ -23,16 +30,77 @@ namespace Vista
             ConstruirBotonesSiFaltan();
         }
 
+        private void SeleccionarSolo(Unidad u)
+        {
+            _seleccionadas.Clear();
+            if (u != null) _seleccionadas.Add(u);
+            RefrescarMarcas();
+        }
+
+        private void AgregarSeleccion(Unidad u)
+        {
+            if (u == null || !u.EstaViva) return;
+            if (_seleccionadas.Contains(u)) _seleccionadas.Remove(u);
+            else _seleccionadas.Add(u);
+            RefrescarMarcas();
+        }
+
+        private void LimpiarUnidadesSeleccionadas()
+        {
+            _seleccionadas.Clear();
+            RefrescarMarcas();
+        }
+
+        private void RefrescarMarcas()
+        {
+            if (_seleccionadas.Count == 0)
+            {
+                if (_edificioSeleccionado == null) _gestor.VistaTablero?.LimpiarSeleccion();
+                return;
+            }
+            var celdas = new List<(int X, int Y)>();
+            foreach (Unidad u in _seleccionadas)
+                if (u.EstaViva) celdas.Add((u.PosicionX, u.PosicionY));
+            _gestor.VistaTablero?.MarcarSelecciones(celdas);
+        }
+
         // Estado de la selección SIEMPRE visible en la barra (se refresca cada
         // frame: Recolectando, Moviendo, Atacando...). Caduca solo el mensaje efímero.
         private void ActualizarEstadoSeleccion()
         {
-            if (_seleccionada != null && _seleccionada.EstaViva)
-                _gestor.EstadoSeleccion = $"Seleccionado: {_seleccionada.Tipo} ({_seleccionada.Estado})";
+            // Poda de muertas del grupo.
+            for (int i = _seleccionadas.Count - 1; i >= 0; i--)
+                if (_seleccionadas[i] == null || !_seleccionadas[i].EstaViva)
+                    _seleccionadas.RemoveAt(i);
+
+            if (_seleccionadas.Count > 1)
+            {
+                _estadoPrevioDe = null;
+                _gestor.EstadoSeleccion = $"{_seleccionadas.Count} unidades seleccionadas";
+            }
+            else if (_seleccionadas.Count == 1)
+            {
+                Unidad u = _seleccionadas[0];
+                if (_estadoPrevioDe == u &&
+                    _estadoPrevio == EstadoUnidad.Moviendo &&
+                    u.Estado != EstadoUnidad.Moviendo)
+                {
+                    _gestor.LimpiarMensaje();
+                }
+                _estadoPrevioDe = u;
+                _estadoPrevio = u.Estado;
+                _gestor.EstadoSeleccion = $"Seleccionado: {u.Tipo} ({u.Estado})";
+            }
             else if (_edificioSeleccionado != null)
+            {
+                _estadoPrevioDe = null;
                 _gestor.EstadoSeleccion = $"Edificio: {_edificioSeleccionado.Tipo} ({_edificioSeleccionado.Estado})";
+            }
             else
+            {
+                _estadoPrevioDe = null;
                 _gestor.EstadoSeleccion = null;
+            }
         }
 
         private void Update()
@@ -61,15 +129,18 @@ namespace Vista
             {
                 // Con unidad caminando, la primera Escape corta el viaje (la
                 // mantiene seleccionada); la siguiente limpia la selección.
-                if (_seleccionada != null && _seleccionada.TieneDestino &&
-                    _gestor.Controlador.CancelarDestino(_seleccionada))
+                bool canceloViaje = false;
+                foreach (Unidad u in _seleccionadas)
+                    if (u.TieneDestino && _gestor.Controlador.CancelarDestino(u))
+                        canceloViaje = true;
+                if (canceloViaje)
                 {
                     _gestor.MostrarMensaje("Viaje cancelado");
                     return;
                 }
                 _modoConstruccion = null;
                 _modoRecoger = false;
-                _seleccionada = null;
+                LimpiarUnidadesSeleccionadas();
                 _edificioSeleccionado = null;
                 _gestor.VistaTablero?.LimpiarSeleccion();
                 _gestor.MostrarMensaje("Seleccion cancelada");
@@ -94,24 +165,42 @@ namespace Vista
                 return;
             }
 
-            // ¿Hay unidad/edificio propio en la casilla? → seleccionar (solo izq:
-            // el clic der con unidad seleccionada ya se usa para mover/atacar).
-            if (!clicDerecho)
+            // Unidades/edificios propios en la casilla.
+            // Izq = selección única (o todas las apiladas en la casilla).
+            // Der = AÑADIR al grupo (selección múltiple).
+            var propias = new List<Unidad>();
+            foreach (Unidad u in foto.UnidadesLocal)
+                if (u.EstaViva && u.PosicionX == x && u.PosicionY == y) propias.Add(u);
+
+            if (propias.Count > 0)
             {
-                Unidad propia = null;
-                foreach (Unidad u in foto.UnidadesLocal)
+                if (clicDerecho)
                 {
-                    if (u.PosicionX == x && u.PosicionY == y) { propia = u; break; }
-                }
-                    if (propia != null)
-                {
-                    _seleccionada = propia;
+                    foreach (Unidad u in propias) AgregarSeleccion(u);
                     _edificioSeleccionado = null;
-                    _gestor.VistaTablero?.MarcarSeleccion(x, y);
-                    _gestor.MostrarMensaje($"Seleccionado: {propia.Tipo} ({propia.Estado})");
+                    if (_seleccionadas.Count == 0)
+                        _gestor.MostrarMensaje("Sin selección");
+                    else if (_seleccionadas.Count > 1)
+                        _gestor.MostrarMensaje($"{_seleccionadas.Count} unidades seleccionadas");
+                    else
+                        _gestor.MostrarMensaje($"Seleccionado: {_seleccionadas[0].Tipo} ({_seleccionadas[0].Estado})");
                     return;
                 }
 
+                // Izq: si hay grupo multi y clic en otra propia → reemplaza por
+                // las de esa casilla (comportamiento clásico de un clic).
+                SeleccionarSolo(propias[0]);
+                for (int i = 1; i < propias.Count; i++) _seleccionadas.Add(propias[i]);
+                RefrescarMarcas();
+                _edificioSeleccionado = null;
+                _gestor.MostrarMensaje(_seleccionadas.Count > 1
+                    ? $"{_seleccionadas.Count} unidades seleccionadas"
+                    : $"Seleccionado: {propias[0].Tipo} ({propias[0].Estado})");
+                return;
+            }
+
+            if (!clicDerecho)
+            {
                 Edificio edificio = null;
                 foreach (Edificio e in foto.EdificiosLocal)
                 {
@@ -120,7 +209,7 @@ namespace Vista
                 if (edificio != null)
                 {
                     _edificioSeleccionado = edificio;
-                    _seleccionada = null;
+                    LimpiarUnidadesSeleccionadas();
                     _gestor.VistaTablero?.MarcarSeleccion(x, y);
                     _gestor.MostrarMensaje($"Edificio: {edificio.Tipo} ({edificio.Estado})");
                     return;
@@ -135,55 +224,67 @@ namespace Vista
                 return;
             }
 
-            // Con unidad seleccionada: clic izq = acción contextual
-            // (item / recolectar / atacar / mover). El clic der hace solo mover/atacar.
-            if (_seleccionada != null)
+            // Con unidad(es) seleccionada(s): acción contextual en TODAS.
+            if (_seleccionadas.Count > 0)
             {
-                // Clic en item (sin modo): si está al lado lo recoge; si no,
-                // se mueve a su lado y lo recoge (mismo flujo que recolectar).
+                // Clic en item: todas caminan y lo recogen al llegar.
                 Item itemClic = BuscarItemEn(x, y);
-                if (itemClic != null && !clicDerecho)
+                if (itemClic != null)
                 {
-                    RecogerItemConClick(itemClic);
+                    int nOk = 0;
+                    foreach (Unidad u in _seleccionadas)
+                        if (_gestor.Controlador.MoverARecogerItem(u, itemClic)) nOk++;
+                    if (nOk > 0)
+                    {
+                        _gestor.MostrarMensaje($"Caminando a {DatosDelJuego.NombreDe(itemClic.Tipo)} ({itemClic.PosicionX},{itemClic.PosicionY})...");
+                        _gestor.VistaTablero?.MarcarSeleccion(itemClic.PosicionX, itemClic.PosicionY);
+                    }
+                    else _gestor.AccionRechazada("recoger item");
                     return;
                 }
 
-                // Clic en yacimiento con aldeano (solo izq) → camina y recolecta.
-                if (!clicDerecho && _seleccionada.EsRecolector)
+                // Clic en yacimiento → todos los aldeanos del grupo recolectan.
+                Recurso r = null;
+                foreach (Recurso rec in foto.Recursos)
+                    if (rec.PosicionX == x && rec.PosicionY == y) { r = rec; break; }
+                if (r != null)
                 {
-                    Recurso r = null;
-                    foreach (Recurso rec in foto.Recursos)
-                        if (rec.PosicionX == x && rec.PosicionY == y) { r = rec; break; }
-                    if (r != null)
+                    int nOk = 0, nAldeanos = 0;
+                    foreach (Unidad u in _seleccionadas)
                     {
-                        bool ady = Mathf.Abs(_seleccionada.PosicionX - r.PosicionX) <= 1
-                                && Mathf.Abs(_seleccionada.PosicionY - r.PosicionY) <= 1;
-                        bool ok = _gestor.Controlador.MoverARecolectar(_seleccionada, r);
-                        if (ok && ady) _gestor.MostrarMensaje($"Recolectando {r.Tipo}");
-                        else if (ok) _gestor.MostrarMensaje($"Caminando a {r.Tipo} ({r.PosicionX},{r.PosicionY})...");
-                        else _gestor.AccionRechazada($"recolectar {r.Tipo}");
-                        return;
+                        if (!u.EsRecolector || !u.EstaViva) continue;
+                        nAldeanos++;
+                        if (_gestor.Controlador.MoverARecolectar(u, r)) nOk++;
                     }
+                    if (nOk > 0)
+                    {
+                        bool ady = _seleccionadas.Any(u =>
+                            Mathf.Abs(u.PosicionX - r.PosicionX) <= 1 &&
+                            Mathf.Abs(u.PosicionY - r.PosicionY) <= 1);
+                        if (ady) _gestor.MostrarMensaje($"Recolectando {r.Tipo}");
+                        else
+                        {
+                            _gestor.MostrarMensaje($"Caminando a {r.Tipo} ({r.PosicionX},{r.PosicionY})...");
+                            _gestor.VistaTablero?.MarcarSeleccion(r.PosicionX, r.PosicionY);
+                        }
+                    }
+                    else if (nAldeanos > 0) _gestor.AccionRechazada($"recolectar {r.Tipo}");
+                    else _gestor.MostrarMensaje("Selecciona aldeanos para recolectar");
+                    return;
                 }
 
-                // Enemigo (cualquier casilla) → MoverAAtacar: si ya está en rango
-                // pega; si no, la unidad CAMINA hacia él hasta poder golpear.
+                // Enemigo → todas caminan/atacan.
                 foreach (Unidad e in foto.UnidadesEnemigo)
                 {
                     if (e.PosicionX == x && e.PosicionY == y && e.EstaViva)
                     {
-                        bool ok = _gestor.Controlador.MoverAAtacar(_seleccionada, e);
-                        if (ok)
+                        int nOk = 0;
+                        foreach (Unidad u in _seleccionadas)
+                            if (_gestor.Controlador.MoverAAtacar(u, e)) nOk++;
+                        if (nOk > 0)
                         {
-                            int d = Mathf.Abs(_seleccionada.PosicionX - e.PosicionX)
-                                  + Mathf.Abs(_seleccionada.PosicionY - e.PosicionY);
-                            if (d <= _seleccionada.RangoAtaque)
-                                _gestor.MostrarMensaje($"Atacando {e.Tipo}");
-                            else
-                            {
-                                _gestor.MostrarMensaje($"Yendo a atacar {e.Tipo}...");
-                                _gestor.VistaTablero?.MarcarSeleccion(e.PosicionX, e.PosicionY);
-                            }
+                            _gestor.MostrarMensaje($"Yendo a atacar {e.Tipo} ({nOk} unidades)...");
+                            _gestor.VistaTablero?.MarcarSeleccion(e.PosicionX, e.PosicionY);
                         }
                         else _gestor.AccionRechazada($"atacar {e.Tipo}");
                         return;
@@ -193,24 +294,31 @@ namespace Vista
                 {
                     if (e.PosicionX == x && e.PosicionY == y && e.EstaViva)
                     {
-                        bool ok = _gestor.Controlador.AtacarEdificio(_seleccionada, e);
-                        if (ok) _gestor.MostrarMensaje($"Atacando {e.Tipo}");
+                        int nOk = 0;
+                        foreach (Unidad u in _seleccionadas)
+                            if (_gestor.Controlador.AtacarEdificio(u, e)) nOk++;
+                        if (nOk > 0) _gestor.MostrarMensaje($"Atacando {e.Tipo} ({nOk} unidades)");
                         else _gestor.AccionRechazada($"atacar {e.Tipo} (¿rango?)");
                         return;
                     }
                 }
 
-                // Mover con unidad seleccionada y clic en casilla vacía/en propia:
-                // corta objetivo de combate y camina (sin teletransporte).
+                // Mover TODO el grupo a la casilla (apilamiento permitido).
                 _modoRecoger = false;
-                if (_seleccionada != null) _seleccionada.Objetivo = null;
-                bool movio = _gestor.Controlador.MoverUnidad(_seleccionada, x, y);
-                if (movio)
+                int movieron = 0, rechazadas = 0;
+                foreach (Unidad u in _seleccionadas)
                 {
-                    _gestor.MostrarMensaje($"Caminando a ({x},{y})...");
-                    _gestor.VistaTablero?.MarcarSeleccion(x, y);
+                    u.Objetivo = null;
+                    if (_gestor.Controlador.MoverUnidad(u, x, y)) movieron++;
+                    else rechazadas++;
                 }
-                else
+                if (movieron > 0)
+                {
+                    string prefijo = _seleccionadas.Count > 1 ? $"{movieron} unidades: " : "";
+                    _gestor.MostrarMensaje($"{prefijo}Caminando a ({x},{y})...");
+                    RefrescarMarcas();
+                }
+                else if (rechazadas > 0)
                 {
                     _gestor.AccionRechazada($"mover a ({x},{y})");
                 }
@@ -280,7 +388,7 @@ namespace Vista
 
             if (_seleccionada == null || !_seleccionada.EsRecolector || !_seleccionada.EstaViva)
             {
-                _seleccionada = AldeanoMasCercanoA(foto, x, y);
+                SeleccionarSolo(AldeanoMasCercanoA(foto, x, y));
                 _edificioSeleccionado = null;
                 if (_seleccionada == null)
                 {
@@ -290,11 +398,23 @@ namespace Vista
                 _gestor.VistaTablero?.MarcarSeleccion(_seleccionada.PosicionX, _seleccionada.PosicionY);
             }
 
-            bool ady = Mathf.Abs(_seleccionada.PosicionX - r.PosicionX) <= 1
-                    && Mathf.Abs(_seleccionada.PosicionY - r.PosicionY) <= 1;
-            bool ok = _gestor.Controlador.MoverARecolectar(_seleccionada, r);
-            if (ok && ady) _gestor.MostrarMensaje($"Recolectando {r.Tipo}");
-            else if (ok)
+            // Varias seleccionadas: todos los aldeanos del grupo van al yacimiento.
+            var aldeanosGrupo = new List<Unidad>();
+            foreach (Unidad u in _seleccionadas)
+                if (u.EsRecolector && u.EstaViva) aldeanosGrupo.Add(u);
+            if (aldeanosGrupo.Count == 0) aldeanosGrupo.Add(_seleccionada);
+
+            int trabajaron = 0;
+            bool algunAdy = false;
+            foreach (Unidad al in aldeanosGrupo)
+            {
+                if (Mathf.Abs(al.PosicionX - r.PosicionX) <= 1 &&
+                    Mathf.Abs(al.PosicionY - r.PosicionY) <= 1)
+                    algunAdy = true;
+                if (_gestor.Controlador.MoverARecolectar(al, r)) trabajaron++;
+            }
+            if (trabajaron > 0 && algunAdy) _gestor.MostrarMensaje($"Recolectando {r.Tipo}");
+            else if (trabajaron > 0)
             {
                 _gestor.MostrarMensaje($"Caminando a {r.Tipo} ({r.PosicionX},{r.PosicionY})...");
                 _gestor.VistaTablero?.MarcarSeleccion(r.PosicionX, r.PosicionY);
@@ -393,7 +513,7 @@ namespace Vista
                 ? Mathf.RoundToInt(Camera.main.transform.position.x) : Mapa.Ancho / 2;
             int cy = Camera.main != null
                 ? Mathf.RoundToInt(Camera.main.transform.position.y) : Mapa.Alto / 2;
-            _seleccionada = UnidadMasCercanaA(foto, cx, cy);
+            SeleccionarSolo(UnidadMasCercanaA(foto, cx, cy));
             _edificioSeleccionado = null;
             if (_seleccionada != null)
                 _gestor.VistaTablero?.MarcarSeleccion(_seleccionada.PosicionX, _seleccionada.PosicionY);
@@ -417,7 +537,7 @@ namespace Vista
                         cy = Mathf.RoundToInt(Camera.main.transform.position.y);
                     }
                     // Preferir aldeano (para recolectar); si no, cualquier unidad.
-                    _seleccionada = AldeanoMasCercanoA(foto, cx, cy) ?? UnidadMasCercanaA(foto, cx, cy);
+                    SeleccionarSolo(AldeanoMasCercanoA(foto, cx, cy) ?? UnidadMasCercanaA(foto, cx, cy));
                     if (_seleccionada != null)
                     {
                         _edificioSeleccionado = null;
