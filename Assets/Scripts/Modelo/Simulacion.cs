@@ -358,7 +358,12 @@ namespace Modelo
 
                 if (EstanAdyacentes(aldeano, recurso))
                 {
-                    aldeano.LimpiarDestino(); // nueva orden: corta cualquier viaje previo
+                    // Ya estaba recolectando (este u otro yacimiento): corta y
+                    // reinicia. Antes IniciarRecoleccionPara devolvía false por
+                    // "ya trabaja" y el jugador veía "No se pudo: recolectar".
+                    CortarRecoleccionYAnunciar(aldeano, dueno);
+                    aldeano.LimpiarDestino();
+                    aldeano.Objetivo = null;
                     return IniciarRecoleccionPara(aldeano, recurso, dueno);
                 }
 
@@ -366,7 +371,17 @@ namespace Modelo
                 // casilla libre junto a él más cercana al aldeano.
                 (int X, int Y)? casilla = CasillaLibreJuntoA(
                     recurso.PosicionX, recurso.PosicionY, aldeano);
-                if (!casilla.HasValue) return false;
+                if (!casilla.HasValue)
+                {
+                    // Sin hueco al lado (tapado por edificios/otros yacimientos):
+                    // la casilla del recurso ES transitable (solo los edificios
+                    // bloquean), y estar encima sigue siendo "adyacente" → recolecta.
+                    if (Tablero.EsTransitable(recurso.PosicionX, recurso.PosicionY,
+                            JugadorLocal, JugadorEnemigo))
+                        casilla = (recurso.PosicionX, recurso.PosicionY);
+                    else
+                        return false;
+                }
 
                 CortarRecoleccionYAnunciar(aldeano, dueno);
                 aldeano.LimpiarDestino();
