@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
@@ -76,7 +77,7 @@ namespace Vista
                 _modoConstruccion = null;
                 bool ok = _gestor.Controlador.ConstruirEdificio(tipo, x, y);
                 if (ok) _gestor.MostrarMensaje($"Construyendo {tipo} en ({x},{y})");
-                else _gestor.AccionRechazada($"construir {tipo} en ({x},{y})");
+                else _gestor.AccionRechazada($"construir {tipo} en ({x},{y}): {MotivoConstruccionFallida(foto, tipo, x, y)}");
                 return;
             }
 
@@ -515,6 +516,39 @@ namespace Vista
         {
             _modoConstruccion = tipo;
             _gestor.MostrarMensaje($"Clic en el mapa para construir {tipo}");
+        }
+
+        // Diagnóstico del rechazo en el MISMO orden que ConstruirEdificioPara:
+        // yacimiento → casilla ocupada → costos. La Vista solo lee la foto.
+        private static string MotivoConstruccionFallida(InstantaneaJuego foto, TipoEdificio tipo, int x, int y)
+        {
+            foreach (Recurso r in foto.Recursos)
+                if (r.PosicionX == x && r.PosicionY == y)
+                    return $"hay un yacimiento de {r.Tipo}";
+
+            foreach (Unidad u in foto.UnidadesLocal)
+                if (u.PosicionX == x && u.PosicionY == y)
+                    return "casilla ocupada por una unidad";
+            foreach (Unidad u in foto.UnidadesEnemigo)
+                if (u.PosicionX == x && u.PosicionY == y)
+                    return "casilla ocupada por una unidad";
+            foreach (Edificio e in foto.EdificiosLocal)
+                if (e.PosicionX == x && e.PosicionY == y)
+                    return $"casilla ocupada por {e.Tipo}";
+            foreach (Edificio e in foto.EdificiosEnemigo)
+                if (e.PosicionX == x && e.PosicionY == y)
+                    return $"casilla ocupada por {e.Tipo}";
+
+            EdificioConfig cfg = DatosDelJuego.EdificiosBase[tipo];
+            var faltan = new List<string>();
+            if (foto.Madera < cfg.CostoMadera) faltan.Add($"Madera {foto.Madera}/{cfg.CostoMadera}");
+            if (foto.Oro < cfg.CostoOro) faltan.Add($"Oro {foto.Oro}/{cfg.CostoOro}");
+            if (foto.Comida < cfg.CostoComida) faltan.Add($"Comida {foto.Comida}/{cfg.CostoComida}");
+            if (foto.Hierro < cfg.CostoHierro) faltan.Add($"Hierro {foto.Hierro}/{cfg.CostoHierro}");
+            if (foto.Piedra < cfg.CostoPiedra) faltan.Add($"Piedra {foto.Piedra}/{cfg.CostoPiedra}");
+            if (faltan.Count > 0) return $"falta {string.Join(", ", faltan)}";
+
+            return "no se pudo (¿partida pausada o terminada?)";
         }
 
         private void Entrenar(TipoUnidad tipo, TipoEdificio en)
