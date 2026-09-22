@@ -90,12 +90,12 @@ namespace Vista
                 {
                     if (u.PosicionX == x && u.PosicionY == y) { propia = u; break; }
                 }
-                if (propia != null)
+                    if (propia != null)
                 {
                     _seleccionada = propia;
                     _edificioSeleccionado = null;
                     _gestor.VistaTablero?.MarcarSeleccion(x, y);
-                    _gestor.MostrarMensaje($"Seleccionado: {propia.Tipo}");
+                    _gestor.MostrarMensaje($"Seleccionado: {propia.Tipo} ({propia.Estado})");
                     return;
                 }
 
@@ -409,7 +409,7 @@ namespace Vista
                     {
                         _edificioSeleccionado = null;
                         _gestor.VistaTablero?.MarcarSeleccion(_seleccionada.PosicionX, _seleccionada.PosicionY);
-                        _gestor.MostrarMensaje($"Seleccionado: {_seleccionada.Tipo}");
+                        _gestor.MostrarMensaje($"Seleccionado: {_seleccionada.Tipo} ({_seleccionada.Estado})");
                     }
                 }
                 if (_seleccionada == null)
