@@ -31,6 +31,9 @@ namespace Modelo
         // Las unidades del jugador quedan en false (las controla la persona).
         public bool ControladaPorIA { get; set; }
 
+        // [FFA] Bando: 0 = jugador local; las bases enemigas usan 1, 2...
+        // Bandos distintos son hostiles (las aldeas se atacan entre ellas).
+        public int Bando { get; set; }
         // [Concurrencia/Batalla] Objetivo actual que persigue la IA (el rival más
         // cercano). null = sin objetivo todavía.
         public Unidad Objetivo { get; set; }

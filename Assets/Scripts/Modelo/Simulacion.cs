@@ -59,6 +59,12 @@ namespace Modelo
         // Capital enemiga (su PRIMER Centro Urbano): el regicidio la tumba y
         // la partida termina aunque le queden tropas o bases menores.
         public Edificio CapitalEnemiga { get; private set; }
+        // Modo exploración (niebla de guerra): el mapa arranca oculto y tus
+        // unidades lo revelan al moverse; descubrir la capital enemiga gana.
+        public bool ModoExploracion { get; private set; }
+        // Radio de visión al revelar (casillas). Ajustable.
+        public int RadioVision { get; set; } = 9;
+        private bool[,] _visto;
         public Mapa Tablero { get; private set; }
         public Partida EstadoPartida { get; private set; }
         // Facciones enemigas en juego, en orden de base (para rótulos y menú).
@@ -180,7 +186,8 @@ namespace Modelo
 
         public Simulacion(string nombreJugador, bool localArriba = true,
             int basesEnemigas = 1, bool enemigoAvanzado = false, bool jugadorAvanzado = false,
-            RitmoPartida ritmo = RitmoPartida.Normal, bool inicioRico = false)
+            RitmoPartida ritmo = RitmoPartida.Normal, bool inicioRico = false,
+            bool exploracion = false)
         {
             _esHost = localArriba;
             JugadorLocal = new Jugador(nombreJugador);
@@ -236,9 +243,9 @@ namespace Modelo
             // Puestos enemigos en orden de dispersión; se valida hueco real.
             int[][] puestos = new int[][]
             {
-                new int[] { 50, 97 }, new int[] { 8, 8 }, new int[] { 90, 8 },
-                new int[] { 8, 50 }, new int[] { 90, 50 },
-                new int[] { 30, 90 }, new int[] { 70, 90 }
+                new int[] { 70, 136 }, new int[] { 11, 11 }, new int[] { 126, 11 },
+                new int[] { 11, 70 }, new int[] { 126, 70 },
+                new int[] { 42, 126 }, new int[] { 98, 126 }
             };
             int colocadas = 0;
             foreach (int[] p in puestos)
@@ -251,6 +258,7 @@ namespace Modelo
                 string faccion = DatosDelJuego.FaccionEnemiga(colocadas);
                 Edificio centro = DatosDelJuego.CrearCentroUrbano(px, py);
                 centro.Faccion = faccion;
+                centro.Bando = colocadas + 1; // [FFA] cada aldea es un bando
                 JugadorEnemigo.AgregarEdificio(centro);
                 if (CapitalEnemiga == null) CapitalEnemiga = centro; // la primera es la capital
                 FaccionesRivales.Add(faccion);
@@ -259,8 +267,10 @@ namespace Modelo
                 int aldeanoY = localArriba ? py - 3 : py + 3;
                 if (aldeanoY < 0) aldeanoY = 0;
                 if (aldeanoY >= Mapa.Alto) aldeanoY = Mapa.Alto - 1;
-                JugadorEnemigo.AgregarUnidad(DatosDelJuego.CrearUnidad(TipoUnidad.Aldeano, px - 1, aldeanoY));
-                if (enemigoAvanzado) EquiparBaseAvanzada(JugadorEnemigo, true, px, py);
+                Unidad aldeanoE = DatosDelJuego.CrearUnidad(TipoUnidad.Aldeano, px - 1, aldeanoY);
+                aldeanoE.Bando = colocadas + 1;
+                JugadorEnemigo.AgregarUnidad(aldeanoE);
+                if (enemigoAvanzado) EquiparBaseAvanzada(JugadorEnemigo, true, px, py, colocadas + 1);
                 colocadas++;
             }
 
@@ -284,6 +294,62 @@ namespace Modelo
                 $"Ritmo={ritmo} | Inicio rico={inicioRico}");
             GestorArchivos.RegistrarAccion(nombreJugador, "Inicio", "Partida inicializada.");
             AplicarRitmo(ritmo);
+            // Niebla inicial: solo se ve alrededor de tu base.
+            ModoExploracion = exploracion;
+            _visto = new bool[Mapa.Ancho, Mapa.Alto];
+            if (ModoExploracion)
+            {
+                RevelarDesde(centroX, centroLocalY, 14);
+                GestorArchivos.RegistrarAccion(nombreJugador, "Exploración",
+                    "Modo exploración: envía aldeanos a revelar el mapa y descubrir la capital enemiga.");
+            }
+        }
+
+        // ¿Ve el jugador esa casilla? Sin exploración, todo visible.
+        // (Lectura sin candado: un bool no se rompe; como mucho va 1 latido tarde.)
+        public bool EsVisible(int x, int y)
+        {
+            if (!ModoExploracion) return true;
+            if (x < 0 || y < 0 || x >= Mapa.Ancho || y >= Mapa.Alto) return false;
+            return _visto[x, y];
+        }
+
+        // Revela el disco de radio r alrededor de (cx,cy).
+        private void RevelarDesde(int cx, int cy, int r)
+        {
+            for (int dx = -r; dx <= r; dx++)
+                for (int dy = -r; dy <= r; dy++)
+                {
+                    if (dx * dx + dy * dy > r * r) continue;
+                    int x = cx + dx, y = cy + dy;
+                    if (x < 0 || y < 0 || x >= Mapa.Ancho || y >= Mapa.Alto) continue;
+                    _visto[x, y] = true;
+                }
+        }
+
+        // Cada latido de movimiento, tus unidades vivas revelan a su alrededor;
+        // si la capital enemiga queda a la vista, la descubriste: victoria.
+        // Corre dentro del candado (la llama AvanzarDestinos).
+        private void RevelarVision()
+        {
+            if (!ModoExploracion || !EstadoPartida.EnEjecucion) return;
+            foreach (Unidad u in JugadorLocal.Unidades)
+            {
+                if (u == null || !u.EstaViva) continue;
+                RevelarDesde(u.PosicionX, u.PosicionY, RadioVision);
+            }
+            if (CapitalEnemiga != null && CapitalEnemiga.EstaViva)
+            {
+                for (int dx = 0; dx < CapitalEnemiga.Lado && EstadoPartida.EnEjecucion; dx++)
+                    for (int dy = 0; dy < CapitalEnemiga.Lado; dy++)
+                    {
+                        int x = CapitalEnemiga.PosicionX + dx, y = CapitalEnemiga.PosicionY + dy;
+                        if (x < 0 || y < 0 || x >= Mapa.Ancho || y >= Mapa.Alto) continue;
+                        if (!_visto[x, y]) continue;
+                        FinalizarPartida(JugadorLocal, "¡Campo enemigo descubierto! (exploración)");
+                        return;
+                    }
+            }
         }
 
         // Ritmo de partida: Rápida = guerra a los 60 s e IA al 85% de daño;
@@ -342,7 +408,8 @@ namespace Modelo
 
         // Equipa una base avanzada: Cuartel operativo cercano + 2 soldados en
         // huecos libres (mejor esfuerzo: si no hay sitio, solo lo que quepa).
-        private void EquiparBaseAvanzada(Jugador dueno, bool esEnemigo, int bx, int by)
+        // Todo con el bando de la base (0 = jugador, 1+ = aldeas enemigas).
+        private void EquiparBaseAvanzada(Jugador dueno, bool esEnemigo, int bx, int by, int bando = 0)
         {
             int[][] candidatos =
             {
@@ -353,6 +420,7 @@ namespace Modelo
             {
                 if (!Tablero.EsAreaEdificable(c[0], c[1], DatosDelJuego.LadoSegunTipo(TipoEdificio.Cuartel), JugadorLocal, JugadorEnemigo)) continue;
                 Edificio cuartel = DatosDelJuego.CrearEdificio(TipoEdificio.Cuartel, c[0], c[1], operativo: true);
+                cuartel.Bando = bando;
                 dueno.AgregarEdificio(cuartel);
                 break;
             }
@@ -367,6 +435,7 @@ namespace Modelo
                         if (Tablero.CasillaTieneRecurso(x, y)) continue;
                         Unidad s = DatosDelJuego.CrearUnidad(TipoUnidad.Soldado, x, y);
                         s.ControladaPorIA = esEnemigo;
+                        s.Bando = bando;
                         dueno.AgregarUnidad(s);
                         puestos++;
                     }
@@ -681,6 +750,9 @@ namespace Modelo
                     return false;
 
                 Edificio nuevoEdificio = DatosDelJuego.CrearEdificio(tipo, x, y);
+                // [FFA] La obra hereda el bando del centro propio más cercano
+                // (la IA amplía su base; el jugador siempre es bando 0).
+                nuevoEdificio.Bando = BandoDeObra(dueno, x, y);
                 dueno.AgregarEdificio(nuevoEdificio);
 
                 // La obra avanza sola en segundo plano y completa el edificio.
@@ -800,7 +872,9 @@ namespace Modelo
                 {
                     (int x, int y) = ObtenerPosicionDeSalida(origen);
                     nueva.MoverA(x, y);
+                    nueva.Bando = origen.Bando; // [FFA] la tropa es de su base
                 }
+                else nueva.Bando = dueno == JugadorEnemigo ? 1 : 0;
 
                 // [PVE] Las tropas de la IA pelean solas vía el bucle de simulación;
                 // las del jugador local las controla la persona (false por defecto).
@@ -1650,6 +1724,7 @@ namespace Modelo
 
                     Unidad u = DatosDelJuego.CrearUnidad(TipoUnidad.Soldado, x, y);
                     u.ControladaPorIA = true;
+                    u.Bando = ladoLocal ? 0 : 1; // [FFA] bandos enfrentados
                     dueno.AgregarUnidad(u);
                     return u;
                 }
@@ -1691,6 +1766,7 @@ namespace Modelo
             {
                 AvanzarDestinosDe(JugadorLocal);
                 AvanzarDestinosDe(JugadorEnemigo);
+                RevelarVision(); // niebla: tus unidades descubren al moverse
             }
         }
 
@@ -1955,15 +2031,15 @@ namespace Modelo
                 return;
             }
 
-            Unidad objetivo = EnemigoMasCercano(u, rival);
+            Unidad objetivo = HostilMasCercano(u);
             // ASEDIO (solo con IA directora): sin tropas enemigas CERCA, la
-            // máquina no se queda quieta: marcha sobre el Centro del rival y
-            // lo golpea (con su handicap). Así el jugador SÍ puede perder por
-            // su Centro y el regicidio vale en ambos sentidos. Las batallas de
-            // mentira (_ia == null) siguen como siempre.
+            // máquina no se queda quieta: marcha sobre el Centro hostil más
+            // cercano y lo golpea (con su handicap). Así el jugador SÍ puede
+            // perder por su Centro y las aldeas se atacan entre ellas. Las
+            // batallas de mentira (_ia == null) siguen como siempre.
             if (_ia != null && (objetivo == null || Distancia(u, objetivo) > RadioAsedioIA))
             {
-                AsediarCentro(u, rival, dueno);
+                AsediarCentro(u, dueno);
                 return;
             }
             if (objetivo == null) { u.Objetivo = null; return; }
@@ -1986,17 +2062,48 @@ namespace Modelo
             IntentarPaso(u, objetivo);
         }
 
-        private Unidad EnemigoMasCercano(Unidad u, Jugador rival)
+        // [FFA] Hostilidad por bandos: bandos distintos se atacan entre sí
+        // (las aldeas enemigas pelean entre ellas y contra ti). La fauna
+        // neutral no es de nadie (no entra aquí: se caza por orden).
+        private static bool SonHostiles(Unidad a, Unidad b) =>
+            a != null && b != null && a != b && a.Bando != b.Bando;
+
+        // Hostil vivo más cercano a u entre AMBOS jugadores (IA y asedios).
+        // Null = nadie hostil vivo.
+        private Unidad HostilMasCercano(Unidad u)
         {
             Unidad mejor = null;
             int mejorDist = int.MaxValue;
-            List<Unidad> lista = rival.Unidades;
-            for (int i = 0; i < lista.Count; i++) // índice, no enumerador (listas que cambian)
+            for (int lado = 0; lado < 2; lado++)
             {
-                Unidad e = lista[i];
-                if (!e.EstaViva) continue;
-                int d = Distancia(u, e);
-                if (d < mejorDist) { mejorDist = d; mejor = e; }
+                List<Unidad> lista = lado == 0 ? JugadorLocal.Unidades : JugadorEnemigo.Unidades;
+                for (int i = 0; i < lista.Count; i++) // índice, no enumerador (listas que cambian)
+                {
+                    Unidad e = lista[i];
+                    if (!e.EstaViva || !SonHostiles(u, e)) continue;
+                    int d = Distancia(u, e);
+                    if (d < mejorDist) { mejorDist = d; mejor = e; }
+                }
+            }
+            return mejor;
+        }
+
+        // Centro hostil vivo más cercano a u (objetivo del asedio). Null =
+        // ningún centro hostil en pie.
+        private Edificio CentroHostilMasCercano(Unidad u)
+        {
+            Edificio mejor = null;
+            int mejorDist = int.MaxValue;
+            for (int lado = 0; lado < 2; lado++)
+            {
+                List<Edificio> lista = lado == 0 ? JugadorLocal.Edificios : JugadorEnemigo.Edificios;
+                foreach (Edificio e in lista)
+                {
+                    if (e == null || e.Tipo != TipoEdificio.CentroUrbano || !e.EstaViva) continue;
+                    if (e.Bando == u.Bando) continue;
+                    int d = DistanciaAEdificio(u, e);
+                    if (d < mejorDist) { mejorDist = d; mejor = e; }
+                }
             }
             return mejor;
         }
@@ -2022,21 +2129,29 @@ namespace Modelo
         // de perseguir y ASEDIA el Centro rival. Ajustable (tests/PVE).
         public int RadioAsedioIA { get; set; } = 15;
 
-        // Primer Centro Urbano vivo de ese jugador (objetivo del asedio).
-        private static Edificio CentroVivoDe(Jugador dueno)
+        // Bando de una obra nueva: el del centro propio más cercano (la IA
+        // amplía su base; el jugador local siempre es bando 0).
+        private int BandoDeObra(Jugador dueno, int x, int y)
         {
+            if (dueno == JugadorLocal) return 0;
+            Edificio mejor = null;
+            int mejorD = int.MaxValue;
             foreach (Edificio e in dueno.Edificios)
-                if (e.Tipo == TipoEdificio.CentroUrbano && e.EstaViva) return e;
-            return null;
+            {
+                if (e == null || e.Tipo != TipoEdificio.CentroUrbano || !e.EstaViva) continue;
+                int d = Math.Abs(x - e.PosicionX) + Math.Abs(y - e.PosicionY);
+                if (d < mejorD) { mejorD = d; mejor = e; }
+            }
+            return mejor != null ? mejor.Bando : 1;
         }
 
-        // La unidad de la IA marcha sobre el Centro rival y lo golpea con su
-        // handicap (misma fórmula que CalcularDano; RecibirDano quita la
-        // coraza). Corre dentro del candado: daño directo, sin pendientes.
-        private void AsediarCentro(Unidad u, Jugador rival, Jugador dueno)
+        // La unidad de la IA marcha sobre el Centro hostil más cercano y lo
+        // golpea con su handicap (misma fórmula que CalcularDano; RecibirDano
+        // quita la coraza). Corre dentro del candado: daño directo.
+        private void AsediarCentro(Unidad u, Jugador dueno)
         {
             u.Objetivo = null; // el objetivo es el edificio, no una unidad
-            Edificio centro = CentroVivoDe(rival);
+            Edificio centro = CentroHostilMasCercano(u);
             if (centro == null) return;
             if (DistanciaAEdificio(u, centro) <= u.RangoAtaque)
             {
@@ -2050,7 +2165,10 @@ namespace Modelo
                     $"{u.Tipo} golpea el {centro.Tipo} rival (vida restante {centro.Vida}).");
                 if (!centro.EstaViva)
                 {
-                    rival.EliminarEdificio(centro);
+                    // El centro puede ser del jugador o de otra aldea (FFA):
+                    // se quita de la lista que lo contenga.
+                    if (!JugadorLocal.Edificios.Remove(centro))
+                        JugadorEnemigo.Edificios.Remove(centro);
                     GestorArchivos.RegistrarAccion(dueno.Nombre, "Asedio", $"{centro.Tipo} rival destruido.");
                     VerificarGanador();
                 }
@@ -2138,25 +2256,33 @@ namespace Modelo
                 "Aldeano en camino (reemplazo automático).");
         }
 
-        // [Batalla] Fin del modo batalla (pieza decidida): si un flanco se
-        // queda sin combatientes controlados por IA, el bucle se apaga en vez
-        // de latir para siempre. Con regicidio, arrasar el ejército ya no da
-        // la victoria (hay que tumbar la capital), pero la pieza sí terminó.
-        // Con IA activa NO se apaga: la máquina repone ejército y la partida
-        // continúa.
+        // [Batalla] Fin del modo batalla (pieza decidida): si ya no hay DUELO
+        // posible (dos combatientes hostiles vivos de la IA), el bucle se
+        // apaga en vez de latir para siempre. Con regicidio, arrasar un
+        // flanco no da la victoria (hay que tumbar la capital), pero la
+        // pieza sí terminó. Con IA activa NO se apaga: la máquina repone
+        // ejército y la partida continúa.
         private void VerificarFinBatalla()
         {
             if (!BucleActivo || _ia != null || !EstadoPartida.EnEjecucion) return;
 
-            bool quedanLocal =
-                JugadorLocal.Unidades.Any(u => u.EstaViva && u.ControladaPorIA);
-            bool quedanEnemigo =
-                JugadorEnemigo.Unidades.Any(u => u.EstaViva && u.ControladaPorIA);
-            if (quedanLocal && quedanEnemigo) return;
+            Unidad primero = null;
+            bool hayDuelo = false;
+            for (int lado = 0; lado < 2 && !hayDuelo; lado++)
+            {
+                List<Unidad> lista = lado == 0 ? JugadorLocal.Unidades : JugadorEnemigo.Unidades;
+                foreach (Unidad u in lista)
+                {
+                    if (!u.EstaViva || !u.ControladaPorIA) continue;
+                    if (primero == null) { primero = u; continue; }
+                    if (SonHostiles(primero, u)) { hayDuelo = true; break; }
+                }
+            }
+            if (hayDuelo) return;
 
             BucleActivo = false;
             GestorArchivos.RegistrarAccion(JugadorLocal.Nombre, "Batalla",
-                "Un flanco se quedó sin combatientes: pieza decidida, bucle apagado.");
+                "Sin duelo posible entre combatientes: pieza decidida, bucle apagado.");
         }
 
         // ESPEJO DE LA RED (el motor refleja la copia del rival)
@@ -2257,7 +2383,9 @@ namespace Modelo
                 // Espejo de red: la copia rival replica la unidad sin opinar.
                 if (!Tablero.EsCoordenadaValida(x, y)) return false;
 
-                JugadorEnemigo.AgregarUnidad(DatosDelJuego.CrearUnidad(tipo, x, y));
+                Unidad espejo = DatosDelJuego.CrearUnidad(tipo, x, y);
+                espejo.Bando = 1; // [FFA] en red el rival es un solo bando
+                JugadorEnemigo.AgregarUnidad(espejo);
                 return true;
             }
         }

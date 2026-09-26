@@ -51,6 +51,12 @@ namespace Vista
         private int _fantasmaX, _fantasmaY;
         private bool _fantasmaValido;
 
+        // Niebla de guerra (modo exploración): capa oscura sobre lo oculto.
+        // Se construye una vez por mundo; por frame solo se apagan celdas.
+        private readonly List<SpriteRenderer> _niebla = new List<SpriteRenderer>();
+        private bool[,] _nieblaVista;
+        private object _mundoNiebla;
+
         public void MostrarFantasma(TipoEdificio tipo, int x, int y, bool valido)
         {
             _fantasmaTipo = tipo;
@@ -149,6 +155,62 @@ namespace Vista
             _seleccion.Clear();
         }
 
+        // Niebla de guerra: ¿este mundo la usa? ¿esa casilla está revelada?
+        private bool NieblaActiva() =>
+            _gestor != null && _gestor.Controlador != null && _gestor.Controlador.ModoExploracion;
+
+        private bool CeldaVisible(int x, int y) =>
+            _gestor == null || _gestor.Controlador == null || _gestor.Controlador.EsVisible(x, y);
+
+        // Capa oscura sobre lo oculto: se construye una vez por mundo (una
+        // décima de segundo) y por frame solo se apagan las celdas reveladas.
+        private void SincronizarNiebla()
+        {
+            if (!NieblaActiva())
+            {
+                if (_niebla.Count > 0)
+                {
+                    foreach (SpriteRenderer sr in _niebla)
+                        if (sr != null) Destroy(sr.gameObject);
+                    _niebla.Clear();
+                    _nieblaVista = null;
+                }
+                _mundoNiebla = null;
+                return;
+            }
+            object mundo = _gestor.Controlador;
+            if (!ReferenceEquals(_mundoNiebla, mundo) || _niebla.Count != Mapa.Ancho * Mapa.Alto)
+            {
+                foreach (SpriteRenderer sr in _niebla)
+                    if (sr != null) Destroy(sr.gameObject);
+                _niebla.Clear();
+                _nieblaVista = new bool[Mapa.Ancho, Mapa.Alto];
+                for (int y = 0; y < Mapa.Alto; y++)
+                    for (int x = 0; x < Mapa.Ancho; x++)
+                    {
+                        var go = new GameObject($"Niebla_{x}_{y}", typeof(SpriteRenderer));
+                        go.transform.SetParent(transform, false);
+                        go.transform.position = PosMundo(x, y);
+                        var sr = go.GetComponent<SpriteRenderer>();
+                        sr.sprite = spriteTile != null ? spriteTile : ObtenerSpriteBlanco();
+                        sr.color = new Color(0.02f, 0.02f, 0.05f, 0.80f);
+                        sr.sortingOrder = 20;
+                        sr.transform.localScale = Vector3.one * tamanoCasilla;
+                        _niebla.Add(sr);
+                    }
+                _mundoNiebla = mundo;
+            }
+            var ctrl = _gestor.Controlador;
+            for (int y = 0; y < Mapa.Alto; y++)
+                for (int x = 0; x < Mapa.Ancho; x++)
+                {
+                    bool vis = ctrl.EsVisible(x, y);
+                    if (vis == _nieblaVista[x, y]) continue;
+                    _nieblaVista[x, y] = vis;
+                    _niebla[y * Mapa.Ancho + x].gameObject.SetActive(!vis);
+                }
+        }
+
         public void Actualizar(InstantaneaJuego foto)
         {
             if (foto == null) return;
@@ -157,14 +219,19 @@ namespace Vista
             // Rejilla estática (construida una sola vez).
             if (_rejilla.Count == 0) ConstruirRejilla();
 
+            // Niebla (solo modo exploración): oculta lo no revelado.
+            SincronizarNiebla();
+            bool niebla = NieblaActiva();
+
             // Fantasma de construcción (si hay modo construcción activo).
             DibujarFantasma();
 
             // Recursos (debajo de unidades/edificios). Los árboles de bosque,
-            // bien grandes, forman la masa forestal.
+            // bien grandes, forman la masa forestal. En niebla, solo lo visto.
             foreach (Recurso r in foto.Recursos)
             {
                 if (r.EstaAgotado) continue;
+                if (niebla && !CeldaVisible(r.PosicionX, r.PosicionY)) continue;
                 Color c = ColorPorRecurso(r.Tipo);
                 float escala = 0.85f;
                 if (r.Tipo == TipoRecurso.Madera || r.Tipo == TipoRecurso.Piedra || r.Tipo == TipoRecurso.Hierro
@@ -184,6 +251,7 @@ namespace Vista
                 foreach (Unidad c in foto.Animales)
                 {
                     if (c == null || !c.EstaViva) continue;
+                    if (niebla && !CeldaVisible(c.PosicionX, c.PosicionY)) continue;
                     Vector3 metaCiervo = PosMundo(c.PosicionX, c.PosicionY);
                     Vector3 pc;
                     if (!_posCiervo.TryGetValue(c, out pc)) pc = metaCiervo;
@@ -201,15 +269,20 @@ namespace Vista
             // Items (sprite propio por tipo; tinte blanco para no destiñir el arte).
             foreach (Item i in foto.Items)
             {
-                Sprite sp = SpriteDe(spritesItem, (int)i.Tipo, null);
+                if (niebla && !CeldaVisible(i.PosicionX, i.PosicionY)) continue;                Sprite sp = SpriteDe(spritesItem, (int)i.Tipo, null);
                 if (sp != null) Dibujar(i.PosicionX, i.PosicionY, sp, Color.white, 0.7f, 1f);
                 else Dibujar(i.PosicionX, i.PosicionY, spriteItem, Color.yellow, 0.7f, 1f);
             }
 
             // Edificios enemigos y locales (cada facción con su color).
+            // En niebla, el enemigo solo se ve descubierto (lo tuyo siempre).
             foreach (Edificio e in foto.EdificiosEnemigo)
-                DibujarEdificio(e, e != null && !string.IsNullOrEmpty(e.Faccion)
+            {
+                if (e == null) continue;
+                if (niebla && !CeldaVisible(e.PosicionX, e.PosicionY)) continue;
+                DibujarEdificio(e, !string.IsNullOrEmpty(e.Faccion)
                     ? ArteRecursos.ColorFaccion(e.Faccion) : colorEnemigo);
+            }
             foreach (Edificio e in foto.EdificiosLocal)
                 DibujarEdificio(e, colorLocal);
 
@@ -218,7 +291,12 @@ namespace Vista
             // uno encima del otro invisible).
             var porCasilla = new Dictionary<(int, int), int>();
             var todas = new List<Unidad>();
-            foreach (Unidad u in foto.UnidadesEnemigo) todas.Add(u);
+            foreach (Unidad u in foto.UnidadesEnemigo)
+            {
+                if (u == null || !u.EstaViva) continue;
+                if (niebla && !CeldaVisible(u.PosicionX, u.PosicionY)) continue;
+                todas.Add(u);
+            }
             foreach (Unidad u in foto.UnidadesLocal) todas.Add(u);
             foreach (Unidad u in todas)
             {
@@ -261,10 +339,12 @@ namespace Vista
             }
 
             // Capital enemiga (objetivo del regicidio): anillo dorado pulsante
-            // sobre su huella para que se vea qué hay que tumbar.
+            // sobre su huella para que se vea qué hay que tumbar. En niebla,
+            // solo si ya la descubriste (si no, delataría su posición).
             Edificio capital = _gestor != null && _gestor.Controlador != null
                 ? _gestor.Controlador.CapitalEnemiga : null;
-            if (capital != null && capital.EstaViva)
+            if (capital != null && capital.EstaViva
+                && (!niebla || CeldaVisible(capital.PosicionX, capital.PosicionY)))
             {
                 float pulso = 0.30f + 0.15f * Mathf.Sin(Time.time * 3f);
                 for (int dx = 0; dx < capital.Lado; dx++)

@@ -174,7 +174,13 @@ Los yacimientos dentro de un bioma rinden **+50% por ciclo**.
   huella y demuele sin soltarlo (solo otra orden lo interrumpe); vale clicar
   cualquier casilla del edificio. El objetivo fijado no se pierde solo.
 - Cada aldea enemiga arranca con su aldeano (la avanzada suma Cuartel + tropas).
-- La barra muestra la **facción** de lo seleccionado y de lo atacado.
+- La barra muestra la **facción** de lo seleccionado y de lo atacado; clic en
+  enemigo sin tropas lo **inspecciona** (facción y vida) en vez de rechazar.
+- **FFA**: con varias bases, las aldeas enemigas se atacan entre ellas y
+  contra ti (bandos 1..5); la IA asedia el Centro hostil más cercano.
+- Mapa **140×140** (misma simetría y densidades del 100×100).
+- **Modo exploración** (menú): niebla de guerra en tablero y minimapa; tus
+  unidades revelan al moverse y descubrir la capital enemiga da la victoria.
 
 ### Panel izquierdo TROPAS
 

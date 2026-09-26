@@ -509,12 +509,22 @@ namespace Vista
                                 (fe != null ? $" ({fe})" : "") + $" ({nOk} unidades)...");
                             _gestor.VistaTablero?.MarcarSeleccion(e.PosicionX, e.PosicionY);
                         }
-                        else if (_seleccionadas.Count > 0)
+                        else if (_seleccionadas.Count > 0
+                            && _seleccionadas.Any(u => u.PuedeAtacar && u.EstaViva))
                         {
                             Unidad pri = _seleccionadas[0];
                             _gestor.AccionRechazada($"atacar {e.Tipo}: {MotivoAtacar(pri, e)}");
                         }
-                        else _gestor.MostrarMensaje("Selecciona tropas para atacar");
+                        else
+                        {
+                            // Sin tropas para atacar: inspeccionar (facción y
+                            // vida) como si lo seleccionaras.
+                            string fe2 = foto != null
+                                ? ArteRecursos.FaccionDeTropa(e, foto.EdificiosEnemigo) : null;
+                            _gestor.MostrarMensaje($"{e.Tipo}" +
+                                (fe2 != null ? $" ({fe2})" : "") +
+                                $" · Vida {e.Vida}/{e.VidaMaxima}");
+                        }
                         return;
                     }
                 }

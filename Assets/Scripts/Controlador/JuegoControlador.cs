@@ -42,12 +42,17 @@ namespace Controlador
         // Todo por defecto = partida clásica. No rompe llamadas existentes.
         public JuegoControlador(string nombreJugador, bool localArriba = true,
             int basesEnemigas = 1, bool enemigoAvanzado = false, bool jugadorAvanzado = false,
-            RitmoPartida ritmo = RitmoPartida.Normal, bool inicioRico = false)
+            RitmoPartida ritmo = RitmoPartida.Normal, bool inicioRico = false,
+            bool exploracion = false)
         {
             // El Modelo arma el mundo entero (jugadores, mapa, partida, posiciones)
             // y arranca SUS tareas de fondo (reloj y, si soy host, el spawner).
-            Motor = new Simulacion(nombreJugador, localArriba, basesEnemigas, enemigoAvanzado, jugadorAvanzado, ritmo, inicioRico);
+            Motor = new Simulacion(nombreJugador, localArriba, basesEnemigas, enemigoAvanzado, jugadorAvanzado, ritmo, inicioRico, exploracion);
         }
+
+        // Exploración (niebla): revela el mapa con tus unidades.
+        public bool ModoExploracion => Motor.ModoExploracion;
+        public bool EsVisible(int x, int y) => Motor.EsVisible(x, y);
 
         // Cambia el ritmo en caliente (gracia + daño IA).
         public void AplicarRitmo(RitmoPartida ritmo) => Motor.AplicarRitmo(ritmo);

@@ -19,11 +19,11 @@ namespace Vista
         // avanzadas (Cuartel + soldados) ellas o también tú, ritmo de
         // partida (Rápida/Normal/Larga) e inicio rico (+recursos y tropas).
         private int _bases = 1;
-        private bool _advE, _advY, _rico;
+        private bool _advE, _advY, _rico, _exploracion;
         private RitmoPartida _ritmo = RitmoPartida.Normal;
         private readonly Button[] _btnBases = new Button[5];
         private readonly Button[] _btnRitmo = new Button[3];
-        private Button _btnAdvE, _btnAdvY, _btnRico;
+        private Button _btnAdvE, _btnAdvY, _btnRico, _btnModo;
         private Text _txtRivales;
 
         public bool Abierto => _panel != null && _panel.activeSelf;
@@ -54,6 +54,7 @@ namespace Vista
             _advE = false;
             _advY = false;
             _rico = false;
+            _exploracion = false;
             _ritmo = RitmoPartida.Normal;
             ActualizarOpciones();
             Jugar();
@@ -63,7 +64,7 @@ namespace Vista
         public void Jugar()
         {
             if (_gestor == null) return;
-            _gestor.ReiniciarConEscenario(_bases, _advE, _advY, _ritmo, _rico);
+            _gestor.ReiniciarConEscenario(_bases, _advE, _advY, _ritmo, _rico, _exploracion);
             Cerrar();
         }
 
@@ -97,6 +98,12 @@ namespace Vista
             ActualizarOpciones();
         }
 
+        public void AlternarModo()
+        {
+            _exploracion = !_exploracion;
+            ActualizarOpciones();
+        }
+
         private void ActualizarOpciones()
         {
             for (int i = 0; i < _btnBases.Length; i++)
@@ -114,6 +121,7 @@ namespace Vista
             PonerTexto(_btnAdvE, _advE ? "ENEMIGO AVANZADO: SÍ" : "ENEMIGO AVANZADO: NO");
             PonerTexto(_btnAdvY, _advY ? "YO AVANZADO: SÍ" : "YO AVANZADO: NO");
             PonerTexto(_btnRico, _rico ? "INICIO RICO: SÍ" : "INICIO RICO: NO");
+            PonerTexto(_btnModo, _exploracion ? "MODO: EXPLORACIÓN" : "MODO: GUERRA");
             if (_txtRivales != null)
             {
                 var nombres = new System.Collections.Generic.List<string>();
@@ -219,7 +227,9 @@ namespace Vista
             _btnAdvY = UiFabrica.Boton(caja.transform, "YO AVANZADO: NO", AlternarAdvY,
                 new Vector2(0.5f, 0.5f), new Vector2(210, 34), new Vector2(110, 110), 14);
             _btnRico = UiFabrica.Boton(caja.transform, "INICIO RICO: NO", AlternarRico,
-                new Vector2(0.5f, 0.5f), new Vector2(260, 34), new Vector2(0, 72), 14);
+                new Vector2(0.5f, 0.5f), new Vector2(210, 34), new Vector2(-110, 72), 14);
+            _btnModo = UiFabrica.Boton(caja.transform, "MODO: GUERRA", AlternarModo,
+                new Vector2(0.5f, 0.5f), new Vector2(210, 34), new Vector2(110, 72), 14);
             ActualizarOpciones();
 
             UiFabrica.Boton(caja.transform, "¡JUGAR!", Jugar,
@@ -242,7 +252,8 @@ namespace Vista
                 "QWER entrenar · 1-4 construir (Esc cancela) · C recoger (x2=cercano) · I item · T mercado · Y mejoras\n" +
                 "Clic en ciervo: cazarlo con aldeanos o tropas (+100 comida) · Alt+QWER: seleccionar tipo\n" +
                 "Flechas/rueda/central: cámara · M: vista completa · Esc: deseleccionar · Menú: volver al inicio\n" +
-                "S: sonido sí/no · Ctrl+5-9: guardar grupo · 5-9: llamar grupo",
+                "S: sonido sí/no · Ctrl+5-9: guardar grupo · 5-9: llamar grupo\n" +
+                "Exploración: manda aldeanos a revelar el mapa y descubrir la capital",
                 new Vector2(0.5f, 0.5f), new Vector2(440, 110), Vector2.zero, 11);
             _txtAyuda.alignment = TextAnchor.MiddleCenter;
             _txtAyuda.color = new Color(0.85f, 0.9f, 0.85f, 1f);

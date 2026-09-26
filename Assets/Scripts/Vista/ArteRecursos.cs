@@ -99,11 +99,15 @@ namespace Vista
             }
         }
 
-        // Facción del centro enemigo más cercano a una tropa (para pintarla
-        // de su color). Null si no hay centros con facción.
+        // Facción de una tropa: por BANDO si lo tiene (1 → primera facción
+        // enemiga...), si no por el centro enemigo más cercano. Null si no
+        // hay centros con facción.
         public static string FaccionDeTropa(Unidad u, List<Edificio> centrosEnemigos)
         {
-            if (u == null || centrosEnemigos == null) return null;
+            if (u == null) return null;
+            if (u.Bando > 0 && u.Bando <= DatosDelJuego.FaccionesEnemigas.Length)
+                return DatosDelJuego.FaccionEnemiga(u.Bando - 1);
+            if (centrosEnemigos == null) return null;
             string mejor = null;
             int mejorD = int.MaxValue;
             foreach (Edificio e in centrosEnemigos)

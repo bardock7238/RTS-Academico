@@ -82,25 +82,43 @@ namespace Vista
             int w = Mapa.Ancho, h = Mapa.Alto;
             _tex.SetPixels32(_fondo);
             var foto = _gestor.UltimaFoto;
+            // Niebla: en exploración solo se pinta lo revelado (lo tuyo
+            // siempre) y el fondo oculto se oscurece.
+            var ctrl = _gestor != null ? _gestor.Controlador : null;
+            bool niebla = ctrl != null && ctrl.ModoExploracion;
             if (foto != null)
             {
                 foreach (Recurso r in foto.Recursos)
-                    if (!r.EstaAgotado) Punto(r.PosicionX, r.PosicionY, PuntoOro);
+                    if (!r.EstaAgotado && (!niebla || ctrl.EsVisible(r.PosicionX, r.PosicionY)))
+                        Punto(r.PosicionX, r.PosicionY, PuntoOro);
                 foreach (Unidad u in foto.UnidadesLocal)
                     if (u.EstaViva) Punto(u.PosicionX, u.PosicionY, PuntoLocal);
                 foreach (Unidad u in foto.UnidadesEnemigo)
-                    if (u.EstaViva)
+                    if (u.EstaViva && (!niebla || ctrl.EsVisible(u.PosicionX, u.PosicionY)))
                     {
                         string f = ArteRecursos.FaccionDeTropa(u, foto.EdificiosEnemigo);
                         Punto(u.PosicionX, u.PosicionY, f != null ? ArteRecursos.ColorFaccion(f) : PuntoEnemigo);
                     }
                 if (foto.Animales != null)
                     foreach (Unidad c in foto.Animales)
-                        if (c.EstaViva) Punto(c.PosicionX, c.PosicionY, PuntoCaza);
+                        if (c.EstaViva && (!niebla || ctrl.EsVisible(c.PosicionX, c.PosicionY)))
+                            Punto(c.PosicionX, c.PosicionY, PuntoCaza);
                 foreach (Edificio e in foto.EdificiosLocal) Bloque(e, PuntoLocal);
                 foreach (Edificio e in foto.EdificiosEnemigo)
-                    Bloque(e, e != null && !string.IsNullOrEmpty(e.Faccion)
+                {
+                    if (e == null) continue;
+                    if (niebla && !ctrl.EsVisible(e.PosicionX, e.PosicionY)) continue;
+                    Bloque(e, !string.IsNullOrEmpty(e.Faccion)
                         ? ArteRecursos.ColorFaccion(e.Faccion) : PuntoEnemigo);
+                }
+            }
+            if (niebla)
+            {
+                // Fondo oculto a oscuras (tapa también los puntos de arriba).
+                for (int y = 0; y < h; y++)
+                    for (int x = 0; x < w; x++)
+                        if (!ctrl.EsVisible(x, y))
+                            _tex.SetPixel(x, y, new Color(0.03f, 0.03f, 0.06f, 1f));
             }
             MarcoCamara();
             _tex.Apply(false);

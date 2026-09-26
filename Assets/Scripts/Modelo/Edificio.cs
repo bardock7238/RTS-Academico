@@ -26,6 +26,8 @@ namespace Modelo
         public List<TipoUnidad> UnidadesEntrenables { get; set; } = new List<TipoUnidad>();
         // Facción dueña para rótulos (p. ej. "Romanos"). Null = sin rótulo.
         public string Faccion { get; set; }
+        // [FFA] Bando: 0 = jugador local; las bases enemigas usan 1, 2...
+        public int Bando { get; set; }
 
         public Edificio()
         {

@@ -180,11 +180,12 @@ namespace Vista
         // menú: tira el mundo anterior y crea uno nuevo con N bases enemigas
         // y avanzados o no. La Vista sigue leyendo el mismo Controlador.
         public void ReiniciarConEscenario(int basesEnemigas, bool enemigoAvanzado, bool jugadorAvanzado,
-            RitmoPartida ritmo = RitmoPartida.Normal, bool inicioRico = false)
+            RitmoPartida ritmo = RitmoPartida.Normal, bool inicioRico = false,
+            bool exploracion = false)
         {
             Controlador?.Detener();
             Controlador = new JuegoControlador(nombreJugador, localArriba,
-                basesEnemigas, enemigoAvanzado, jugadorAvanzado, ritmo, inicioRico);
+                basesEnemigas, enemigoAvanzado, jugadorAvanzado, ritmo, inicioRico, exploracion);
             Controlador.IniciarIA();
             _sonBajas = -1; // el mundo nuevo sincroniza el sonido sin sonar
             var rivales = Controlador.FaccionesRivales;

@@ -7,8 +7,8 @@ namespace Modelo
     {
         // Mapa grande estilo RTS (vale cualquier tamaño: todo el código usa
         // Ancho/Alto, sin coordenadas quemadas).
-        public const int Ancho = 100;
-        public const int Alto = 100;
+        public const int Ancho = 140;
+        public const int Alto = 140;
 
         // Lista de recursos colocados en casillas del mapa
         public List<Recurso> RecursosEnMapa { get; set; }
