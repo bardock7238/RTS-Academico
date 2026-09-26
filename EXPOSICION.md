@@ -152,7 +152,7 @@ PanelFinPartida, MenuRed      · CERO Task/Thread/lock     · ConectorRed (Threa
 - **Mapa 140×140** · ~70 yacimientos (Oro, Madera, Comida, Hierro, Piedra)
 - **Biomas visuales** (pradera/arena/bosque, simétricos) + **minimapa** con clic-para-mover
 - **FFA**: las aldeas enemigas se atacan entre ellas y contra ti (bandos)
-- **Modo exploración**: niebla de guerra; descubrir la capital gana
+- **Modo exploración**: niebla de guerra; destruir la capital sin saber dónde está
 - **Economía**: recolección en background (adyacente o viaje + autoinicio)
 - **Construcción**: Casa, Cuartel, Torre, Centro Urbano (termina sola vía Task)
 - **Entrenamiento**: Aldeano, Soldado, Arquero, Caballero (Task + cancelación)

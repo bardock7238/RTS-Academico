@@ -253,7 +253,7 @@ namespace Vista
                 "Clic en ciervo: cazarlo con aldeanos o tropas (+100 comida) · Alt+QWER: seleccionar tipo\n" +
                 "Flechas/rueda/central: cámara · M: vista completa · Esc: deseleccionar · Menú: volver al inicio\n" +
                 "S: sonido sí/no · Ctrl+5-9: guardar grupo · 5-9: llamar grupo\n" +
-                "Exploración: manda aldeanos a revelar el mapa y descubrir la capital",
+                "Exploración: encuentra la capital oculta entre la niebla y destrúyela",
                 new Vector2(0.5f, 0.5f), new Vector2(440, 110), Vector2.zero, 11);
             _txtAyuda.alignment = TextAnchor.MiddleCenter;
             _txtAyuda.color = new Color(0.85f, 0.9f, 0.85f, 1f);

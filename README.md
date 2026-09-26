@@ -180,7 +180,8 @@ Los yacimientos dentro de un bioma rinden **+50% por ciclo**.
   contra ti (bandos 1..5); la IA asedia el Centro hostil más cercano.
 - Mapa **140×140** (misma simetría y densidades del 100×100).
 - **Modo exploración** (menú): niebla de guerra en tablero y minimapa; tus
-  unidades revelan al moverse y descubrir la capital enemiga da la victoria.
+  unidades revelan al moverse y ganas destruyendo la capital sin saber
+  dónde está (regicidio a ciegas).
 
 ### Panel izquierdo TROPAS
 

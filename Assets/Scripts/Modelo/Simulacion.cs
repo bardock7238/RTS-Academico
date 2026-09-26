@@ -301,7 +301,7 @@ namespace Modelo
             {
                 RevelarDesde(centroX, centroLocalY, 14);
                 GestorArchivos.RegistrarAccion(nombreJugador, "Exploración",
-                    "Modo exploración: envía aldeanos a revelar el mapa y descubrir la capital enemiga.");
+                    "Modo exploración: encuentra la capital enemiga entre la niebla y destrúyela.");
             }
         }
 
@@ -327,8 +327,9 @@ namespace Modelo
                 }
         }
 
-        // Cada latido de movimiento, tus unidades vivas revelan a su alrededor;
-        // si la capital enemiga queda a la vista, la descubriste: victoria.
+        // Cada latido de movimiento, tus unidades vivas revelan a su alrededor.
+        // En exploración NO se gana por descubrir: hay que DESTRUIR la capital
+        // sin saber dónde está (la niebla solo esconde, el regicidio decide).
         // Corre dentro del candado (la llama AvanzarDestinos).
         private void RevelarVision()
         {
@@ -337,18 +338,6 @@ namespace Modelo
             {
                 if (u == null || !u.EstaViva) continue;
                 RevelarDesde(u.PosicionX, u.PosicionY, RadioVision);
-            }
-            if (CapitalEnemiga != null && CapitalEnemiga.EstaViva)
-            {
-                for (int dx = 0; dx < CapitalEnemiga.Lado && EstadoPartida.EnEjecucion; dx++)
-                    for (int dy = 0; dy < CapitalEnemiga.Lado; dy++)
-                    {
-                        int x = CapitalEnemiga.PosicionX + dx, y = CapitalEnemiga.PosicionY + dy;
-                        if (x < 0 || y < 0 || x >= Mapa.Ancho || y >= Mapa.Alto) continue;
-                        if (!_visto[x, y]) continue;
-                        FinalizarPartida(JugadorLocal, "¡Campo enemigo descubierto! (exploración)");
-                        return;
-                    }
             }
         }
 
