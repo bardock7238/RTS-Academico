@@ -55,7 +55,7 @@ IA económica+militar, Controlador mantiene API, arte a cargo del compañero):
   - `GestorJuego`: raíz con `RuntimeInitializeOnLoadMethod`, `ConstruirUiSiFalta` (cámara → EventSystem → tablero → canvas/HUD → input → panel fin), expone `VistaTablero`.
   - `VistaTablero`: pool de sprites, rejilla 30×30 redibujada cada frame (bug de slots corregido), campos `[SerializeField] Sprite[]` para el arte del compañero (issues #4–#9).
   - `HudRecursos`: HUD de 5 recursos + tiempo + mensajes; fallback de Canvas corregido.
-  - `ControlInputUsuario`: clics y teclas QWER (entrenar) / 1-4 (construir) / **C** (modo recoger: clic en yacimiento o item → la unidad camina sola; autoselecciona aldeano; 2.ª C = lo más cercano) / **I** (`RecogerItemCercano`) / Esc → API del Controlador.
+  - `ControlInputUsuario`: clics y teclas QWER (entrenar) / **Alt+QWER** (seleccionar todas las vivas de ese tipo) / 1-4 (construir) / **C** (modo recoger: clic en yacimiento o item → la unidad camina sola; autoselecciona aldeano; 2.ª C = lo más cercano) / **I** (`RecogerItemCercano`) / Esc → API del Controlador.
   - `PanelFinPartida`: modal de fin + Reintentar (`LoadScene`; `Detener()` solo en `OnDestroy` del Gestor).
 - **Escena**: `Assets/Escenas/Juego.unity` (cámara ortográfica centrada en el mapa, size 15.5 + placeholder); registrada en `ProjectSettings/EditorBuildSettings.asset`.
 - **Verificación**: Unity batch sin `error CS` (`Exiting batchmode successfully`); suites de escritorio **rts-pve-test 18 OK** y **rts-red-test 8 OK, 0 fallos**.
@@ -222,7 +222,9 @@ Se validó fuera de Unity (los scripts no usan `UnityEngine`), en proyectos temp
 4. Recolectar: aldeano adyacente al yacimiento → suma por ciclo en segundo plano.
 5. Mover: destino dentro del mapa y casilla libre; la unidad **camina celda a celda** (BFS esquiva obstáculos) hasta llegar — nada de teletransporte.
 6. Atacar: distancia ≤ `RangoAtaque`; daño = max(0, ataque - defensa).
-7. Victoria: jugador derrotado si no tiene Centro Urbano con vida **o** no tiene unidades.
+7. Victoria (regicidio asimétrico): el enemigo cae al perder su capital (primer
+   Centro Urbano), aunque le queden tropas o bases; el jugador cae si pierde su
+   Centro o se queda sin unidades (la IA ahora también asedia).
 
 ---
 
