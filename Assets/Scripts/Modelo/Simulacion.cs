@@ -241,19 +241,23 @@ namespace Modelo
             if (inicioRico) DarInicioRico(JugadorLocal, centroX, centroLocalY, aldeanoLocalY);
 
             // Puestos enemigos en orden de dispersión; se valida hueco real.
+            // En EXPLORACIÓN son aleatorios (si no, te aprenderías la capital
+            // de memoria): lejos de tu base y separados entre sí.
             int[][] puestos = new int[][]
             {
                 new int[] { 70, 136 }, new int[] { 11, 11 }, new int[] { 126, 11 },
                 new int[] { 11, 70 }, new int[] { 126, 70 },
                 new int[] { 42, 126 }, new int[] { 98, 126 }
             };
+            if (exploracion) puestos = PuestosAleatorios(frentes, centroX, centroLocalY);
             int colocadas = 0;
             foreach (int[] p in puestos)
             {
                 if (colocadas >= frentes) break;
-                // El puesto 0 es el clásico (ancla del otro lado según la máquina).
-                int px = colocadas == 0 ? centroX : p[0];
-                int py = colocadas == 0 ? centroEnemigoY : p[1];
+                // El puesto 0 es el clásico (ancla del otro lado según la máquina),
+                // salvo en exploración (todo aleatorio, capital incluida).
+                int px = (colocadas == 0 && !exploracion) ? centroX : p[0];
+                int py = (colocadas == 0 && !exploracion) ? centroEnemigoY : p[1];
                 if (!Tablero.EsAreaEdificable(px, py, 3, JugadorLocal, JugadorEnemigo)) continue;
                 string faccion = DatosDelJuego.FaccionEnemiga(colocadas);
                 Edificio centro = DatosDelJuego.CrearCentroUrbano(px, py);
@@ -393,6 +397,39 @@ namespace Modelo
             }
             GestorArchivos.RegistrarAccion(dueno.Nombre, "Inicio",
                 "Inicio rico: +recursos, aldeanos extra y Casa operativa.");
+        }
+
+        // Puestos enemigos ALEATORIOS para exploración: la capital lejos de tu
+        // base (manhattan >= 70) y las demás separadas (>= 45 de ti, >= 30
+        // entre sí). 200 intentos por base; si falla, cae al puesto clásico.
+        private int[][] PuestosAleatorios(int frentes, int centroX, int centroLocalY)
+        {
+            var lista = new List<int[]>();
+            int[][] clasicos = new int[][]
+            {
+                new int[] { 70, 136 }, new int[] { 11, 11 }, new int[] { 126, 11 },
+                new int[] { 11, 70 }, new int[] { 126, 70 },
+                new int[] { 42, 126 }, new int[] { 98, 126 }
+            };
+            for (int i = 0; i < frentes; i++)
+            {
+                int[] elegido = null;
+                for (int intento = 0; intento < 200 && elegido == null; intento++)
+                {
+                    int px = _rng.Next(5, Mapa.Ancho - 8);
+                    int py = _rng.Next(5, Mapa.Alto - 8);
+                    if (!Tablero.EsAreaEdificable(px, py, 3, JugadorLocal, JugadorEnemigo)) continue;
+                    int dBase = Math.Abs(px - centroX) + Math.Abs(py - centroLocalY);
+                    if (i == 0 ? dBase < 70 : dBase < 45) continue;
+                    bool cerca = false;
+                    foreach (int[] q in lista)
+                        if (Math.Abs(px - q[0]) + Math.Abs(py - q[1]) < 30) { cerca = true; break; }
+                    if (cerca) continue;
+                    elegido = new int[] { px, py };
+                }
+                lista.Add(elegido ?? clasicos[i % clasicos.Length]);
+            }
+            return lista.ToArray();
         }
 
         // Equipa una base avanzada: Cuartel operativo cercano + 2 soldados en

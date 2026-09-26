@@ -181,7 +181,7 @@ Los yacimientos dentro de un bioma rinden **+50% por ciclo**.
 - Mapa **140×140** (misma simetría y densidades del 100×100).
 - **Modo exploración** (menú): niebla de guerra en tablero y minimapa; tus
   unidades revelan al moverse y ganas destruyendo la capital sin saber
-  dónde está (regicidio a ciegas).
+  dónde está (regicidio a ciegas, capital en ubicación aleatoria).
 
 ### Panel izquierdo TROPAS
 
