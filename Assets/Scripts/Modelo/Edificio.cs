@@ -10,6 +10,11 @@ namespace Modelo
         public int Vida { get; set; }
         public int PosicionX { get; set; }        // Casilla X del mapa
         public int PosicionY { get; set; }        // Casilla Y del mapa
+        // Huella lógica: ocupa Lado x Lado casillas desde (PosicionX, PosicionY)
+        // como esquina mínima. Casa/Torre = 1, Cuartel/CentroUrbano = 2.
+        public int Lado { get; set; } = 1;
+        public bool Ocupa(int x, int y) =>
+            x >= PosicionX && x < PosicionX + Lado && y >= PosicionY && y < PosicionY + Lado;
         public int CostoOro { get; set; }
         public int CostoMadera { get; set; }
         public int CostoComida { get; set; }
@@ -19,6 +24,8 @@ namespace Modelo
         public EstadoEdificio Estado { get; set; }
         // Unidades que este edificio puede entrenar (CentroUrbano -> Aldeano, Cuartel -> militares).
         public List<TipoUnidad> UnidadesEntrenables { get; set; } = new List<TipoUnidad>();
+        // Facción dueña para rótulos (p. ej. "Romanos"). Null = sin rótulo.
+        public string Faccion { get; set; }
 
         public Edificio()
         {

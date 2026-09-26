@@ -126,6 +126,12 @@ namespace Modelo
                 Destino = DestinoResultado,
                 Contenido = contenido + Environment.NewLine
             });
+            // El resultado se lee justo al terminar (sin Flush intermedio):
+            // se espera al escritor para que quede en disco al retornar.
+            // El disco lo sigue tocando SOLO el hilo escritor; aquí solo se
+            // espera su centinela (nunca se toma lock(Candado) en ese hilo,
+            // así que no hay interbloqueo). Una vez por partida: sin costo.
+            Flush();
         }
     }
 }

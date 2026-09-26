@@ -28,19 +28,29 @@ namespace Controlador
 
         public Jugador JugadorLocal => Motor.JugadorLocal;
         public Jugador JugadorEnemigo => Motor.JugadorEnemigo;
-        public Mapa Tablero => Motor.Tablero;
+        // Capital enemiga (su primer Centro): objetivo del regicidio.
+        public Edificio CapitalEnemiga => Motor.CapitalEnemiga;        public Mapa Tablero => Motor.Tablero;
         public Partida EstadoPartida => Motor.EstadoPartida;
         public IReadOnlyList<Item> ItemsVisibles => Motor.ItemsVisibles;
 
         public ConectorRed RedPartida { get; private set; }
         public string NombreRivalRed { get; private set; }
 
-        public JuegoControlador(string nombreJugador, bool localArriba = true)
+        // Escenario opcional: nº de bases enemigas (1..4) y si arrancan
+        // avanzadas (Cuartel + soldados) o básicas; igual para el jugador.
+        // Ritmo (Rápida/Normal/Larga) e inicio rico (colchón + aldeanos + Casa).
+        // Todo por defecto = partida clásica. No rompe llamadas existentes.
+        public JuegoControlador(string nombreJugador, bool localArriba = true,
+            int basesEnemigas = 1, bool enemigoAvanzado = false, bool jugadorAvanzado = false,
+            RitmoPartida ritmo = RitmoPartida.Normal, bool inicioRico = false)
         {
             // El Modelo arma el mundo entero (jugadores, mapa, partida, posiciones)
             // y arranca SUS tareas de fondo (reloj y, si soy host, el spawner).
-            Motor = new Simulacion(nombreJugador, localArriba);
+            Motor = new Simulacion(nombreJugador, localArriba, basesEnemigas, enemigoAvanzado, jugadorAvanzado, ritmo, inicioRico);
         }
+
+        // Cambia el ritmo en caliente (gracia + daño IA).
+        public void AplicarRitmo(RitmoPartida ritmo) => Motor.AplicarRitmo(ritmo);
 
         // ACCIONES DE JUEGO (todas delegan al Modelo)
 
@@ -120,6 +130,22 @@ namespace Controlador
         // en el Modelo). La Vista solo llama esto al elegir modo máquina.
         public bool IniciarIA() => Motor.IniciarIA();
         public bool IAActiva => Motor.IAActiva;
+        // Handicap de la IA (1.0 = sin handicap). Ajustable sin romper la API.
+        public double FactorDanoIA { get => Motor.FactorDanoIA; set => Motor.FactorDanoIA = value; }
+        // Segundos de gracia sin ataques de la IA (PVE). Ajustable.
+        public int GraciaMilitarSegundos { get => Motor.GraciaMilitarSegundos; set => Motor.GraciaMilitarSegundos = value; }
+        // Reposición automática de aldeanos. Ajustable.
+        public bool ReposicionAldeanos { get => Motor.ReposicionAldeanos; set => Motor.ReposicionAldeanos = value; }
+        // Mercado y herrería (solo jugador local).
+        public bool VenderRecurso(TipoRecurso tipo) => Motor.VenderRecurso(tipo);
+        public bool ComprarRecurso(TipoRecurso tipo) => Motor.ComprarRecurso(tipo);
+        public bool MejorarAtaque() => Motor.MejorarAtaque();
+        public bool MejorarDefensa() => Motor.MejorarDefensa();
+        public bool MejorarRecoleccion() => Motor.MejorarRecoleccion();
+        // Facciones enemigas de la partida (una por base, en orden).
+        public IReadOnlyList<string> FaccionesRivales => Motor.FaccionesRivales;
+        // Cambio de modo en caliente: PVE → red/PvP apaga la IA sin detener la partida.
+        public bool DetenerIA() => Motor.DetenerIA();
 
         // API PARA LA VISTA (Unity)
 

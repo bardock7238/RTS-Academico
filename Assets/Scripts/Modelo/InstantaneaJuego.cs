@@ -20,6 +20,7 @@ namespace Modelo
     {
         public List<Unidad> UnidadesLocal { get; }
         public List<Unidad> UnidadesEnemigo { get; }
+        public List<Unidad> Animales { get; }
         public List<Edificio> EdificiosLocal { get; }
         public List<Edificio> EdificiosEnemigo { get; }
         public List<Recurso> Recursos { get; }
@@ -33,10 +34,12 @@ namespace Modelo
         public int TiempoJuegoSegundos { get; }
         public bool EnEjecucion { get; }
         public string GanadorNombre { get; }
+        public string MotivoVictoria { get; }
 
         public InstantaneaJuego(
             List<Unidad> unidadesLocal,
             List<Unidad> unidadesEnemigo,
+            List<Unidad> animales,
             List<Edificio> edificiosLocal,
             List<Edificio> edificiosEnemigo,
             List<Recurso> recursos,
@@ -44,10 +47,12 @@ namespace Modelo
             int oro, int madera, int comida, int hierro, int piedra,
             int tiempoJuegoSegundos,
             bool enEjecucion,
-            string ganadorNombre)
+            string ganadorNombre,
+            string motivoVictoria = null)
         {
             UnidadesLocal = unidadesLocal;
             UnidadesEnemigo = unidadesEnemigo;
+            Animales = animales;
             EdificiosLocal = edificiosLocal;
             EdificiosEnemigo = edificiosEnemigo;
             Recursos = recursos;
@@ -60,6 +65,7 @@ namespace Modelo
             TiempoJuegoSegundos = tiempoJuegoSegundos;
             EnEjecucion = enEjecucion;
             GanadorNombre = ganadorNombre;
+            MotivoVictoria = motivoVictoria;
         }
     }
 }

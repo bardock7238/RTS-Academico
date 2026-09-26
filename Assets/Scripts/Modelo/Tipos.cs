@@ -6,7 +6,8 @@ namespace Modelo
         Aldeano,
         Soldado,
         Arquero,
-        Caballero
+        Caballero,
+        Ciervo          // Fauna neutral: vaga sola, se caza por comida (no ataca)
     }
 
     // Tipos de edificios construibles.
@@ -40,6 +41,15 @@ namespace Modelo
         Casco,          // +Defensa por X segundos (temporal).
         Espada,         // +Ataque mientras la lleve una unidad (equipable).
         Herramientas    // +Producción de recursos permanente (pasivo).
+    }
+
+    // Ritmo de partida (elegido en el menú): ajusta la gracia militar y el
+    // daño de la IA. Rápida = guerra pronto; Larga = partida épica.
+    public enum RitmoPartida
+    {
+        Rapida,
+        Normal,
+        Larga
     }
 
     // Estado en el que puede encontrarse una unidad.

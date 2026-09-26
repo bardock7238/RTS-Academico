@@ -19,6 +19,11 @@ namespace Modelo
         public int DefensaBonus { get; set; }         // Temporal (Casco): lo quita un Task de expiración.
         public double BonusRecoleccion { get; set; }  // Pasivo (Herramientas): +fracción por ciclo.
         public int ItemsRecogidos { get; set; }       // Contador para el informe / logs.
+        // Mejoras de herrería (0..3): ataque y defensa de tus tropas, recolección.
+        public int MejoraAtaque { get; set; }
+        public int MejoraDefensa { get; set; }
+        public int MejoraRecoleccion { get; set; }
+        public int BonoAtaque { get; set; }           // +1 por nivel de MejoraAtaque.
 
         public Jugador(string nombre)
         {

@@ -58,8 +58,8 @@ namespace Modelo
 
         public bool EstaViva => Vida > 0;
 
-        // El aldeano recolecta pero no combate.
-        public bool PuedeAtacar => EstaViva && !EsRecolector;
+        // El aldeano recolecta pero no combate; el ciervo huye (tampoco ataca).
+        public bool PuedeAtacar => EstaViva && !EsRecolector && Tipo != TipoUnidad.Ciervo;
 
         // [Concurrencia/Items] Ataque real de la unidad, contando el item equipado.
         // Ambos jugadores lo calculan igual en su copia → el daño por red coincide.

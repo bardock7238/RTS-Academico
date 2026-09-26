@@ -211,9 +211,11 @@ namespace Modelo
             _mundo.EntrenarUnidadIA(TipoUnidad.Soldado, TipoEdificio.Cuartel);
         }
 
-        // Busca en anillos alrededor de (cx,cy) una casilla edificable (libre, sin yacimiento).
+        // Busca en anillos alrededor de (cx,cy) un ancla donde quepa la HUELLA
+        // (libre, sin yacimiento). El Cuartel ocupa 2x2.
         private (int X, int Y)? BuscarCasillaEdificableCerca(int cx, int cy, int radioMax)
         {
+            int lado = DatosDelJuego.LadoSegunTipo(TipoEdificio.Cuartel);
             for (int radio = 1; radio <= radioMax; radio++)
             {
                 for (int dx = -radio; dx <= radio; dx++)
@@ -223,7 +225,7 @@ namespace Modelo
                         if (Math.Abs(dx) != radio && Math.Abs(dy) != radio) continue; // solo borde del anillo
                         int x = cx + dx;
                         int y = cy + dy;
-                        if (!EsCasillaEdificableIA(x, y)) continue;
+                        if (!EsCasillaEdificableIA(x, y, lado)) continue;
                         return (x, y);
                     }
                 }
@@ -231,14 +233,12 @@ namespace Modelo
             return null;
         }
 
-        private bool EsCasillaEdificableIA(int x, int y)
+        private bool EsCasillaEdificableIA(int x, int y, int lado)
         {
             // Consulta barata sobre el mundo vivo; Simulacion.Tablero es POCO y
-            // EsCasillaLibre solo lee listas. Para mayor rigor se podría lockear,
+            // EsAreaEdificable solo lee listas. Para mayor rigor se podría lockear,
             // pero aquí la decisión es best-effort: ConstruirEdificioIA revalida.
-            return _mundo.Tablero.EsCoordenadaValida(x, y)
-                && !_mundo.Tablero.CasillaTieneRecurso(x, y)
-                && _mundo.Tablero.EsCasillaLibre(x, y, _mundo.JugadorLocal, _mundo.JugadorEnemigo);
+            return _mundo.Tablero.EsAreaEdificable(x, y, lado, _mundo.JugadorLocal, _mundo.JugadorEnemigo);
         }
     }
 }

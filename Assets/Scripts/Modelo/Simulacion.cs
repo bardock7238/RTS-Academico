@@ -56,14 +56,25 @@ namespace Modelo
 
         public Jugador JugadorLocal { get; private set; }
         public Jugador JugadorEnemigo { get; private set; }
+        // Capital enemiga (su PRIMER Centro Urbano): el regicidio la tumba y
+        // la partida termina aunque le queden tropas o bases menores.
+        public Edificio CapitalEnemiga { get; private set; }
         public Mapa Tablero { get; private set; }
         public Partida EstadoPartida { get; private set; }
+        // Facciones enemigas en juego, en orden de base (para rótulos y menú).
+        public readonly List<string> FaccionesRivales = new List<string>();
+        // Fauna neutral (ciervos): no es de ningún jugador; se caza por comida.
+        public List<Unidad> Fauna { get; private set; } = new List<Unidad>();
 
         // ---- Items en el mapa (el spawner concurrente del host los siembra) ----
         private readonly bool _esHost;                 // Solo el host siembra items.
         private readonly Random _rng = new Random();
         private readonly CancellationTokenSource _ctsSpawner = new CancellationTokenSource();
         private readonly List<Item> _itemsGlobales = new List<Item>();
+
+        // [Concurrencia] Economía pasiva: Casas y Centros operativos generan
+        // solos (comida y oro). Se cancela con este token.
+        private readonly CancellationTokenSource _ctsEconomia = new CancellationTokenSource();
 
         // La Vista lee esto (vía hilo principal) para pintar los items en el mapa.
         public IReadOnlyList<Item> ItemsVisibles
@@ -98,6 +109,10 @@ namespace Modelo
         // avanza a TODAS las unidades controladas por IA en cada latido.
         private readonly CancellationTokenSource _ctsSimulacion = new CancellationTokenSource();
         private readonly CancellationTokenSource _ctsEfectosTemporales = new CancellationTokenSource();
+        // [Concurrencia] Fauna (ciervos que vagan): su propio CTS y su azar
+        // dedicado (Random no es seguro entre hilos: nadie más lo toca).
+        private readonly CancellationTokenSource _ctsFauna = new CancellationTokenSource();
+        private readonly Random _rngFauna = new Random();
         private volatile bool _detenido;
 
         // == CONFIGURACIÓN (el Controlador/tests la ajusta; el Modelo la usa) ==
@@ -111,6 +126,17 @@ namespace Modelo
         public int MaxItemsEnMapa { get; set; } = 8;
         // [PVE] Cada cuántos ms decide la IA enemiga (las pruebas lo bajan).
         public int IntervaloIaMs { get; set; } = 2000;
+        // [PVE] Handicap de la IA: sus tropas hacen este % de daño (0.6 = 60%).
+        // Solo afecta a golpes de unidades ControladaPorIA; tus tropas pegan
+        // igual y el espejo de red transmite el daño ya calculado (sin tocar).
+        public double FactorDanoIA { get; set; } = 0.6;
+        // Reposición automática: al haber bajas, el Centro entrena un aldeano
+        // solo (si hay hueco, fondos y quedan menos de 4). Vale para ambos.
+        public bool ReposicionAldeanos { get; set; } = true;
+        // [PVE] Gracia militar: con IA directora, sus tropas no INICIAN ataques
+        // hasta este segundo (se preparan pero no pegan). Tus ataques valen
+        // siempre. Sin IA (batalla de mentira) no aplica.
+        public int GraciaMilitarSegundos { get; set; } = 180;
         // Cuántos SEGUNDOS dura el Casco antes de que su Task lo apague.
         public int DuracionCascoSegundos { get; set; } = 10;
 
@@ -152,7 +178,9 @@ namespace Modelo
                 TaskScheduler.Default);
         }
 
-        public Simulacion(string nombreJugador, bool localArriba = true)
+        public Simulacion(string nombreJugador, bool localArriba = true,
+            int basesEnemigas = 1, bool enemigoAvanzado = false, bool jugadorAvanzado = false,
+            RitmoPartida ritmo = RitmoPartida.Normal, bool inicioRico = false)
         {
             _esHost = localArriba;
             JugadorLocal = new Jugador(nombreJugador);
@@ -173,28 +201,174 @@ namespace Modelo
             if (_esHost)
                 IniciarTarea(IniciarSpawnerItemsAsync(), "Spawner de items");
 
+            // [Concurrencia] La fauna vaga sola (ciervos del bosque dan vueltas
+            // cerca de casa; la Vista los desliza para que se vean correr).
+            IniciarTarea(VagarFaunaAsync(), "Fauna");
+
+            // [Concurrencia] Economía pasiva: cada 4 s las Casas dan 1 comida
+            // y los Centros 1 oro (solo operativos, ambos jugadores).
+            IniciarTarea(EconomiaPasivaAsync(), "Economia");
+
             // Cada instancia coloca a SU jugador en su lado. El host (localArriba = true)
             // vive arriba; el cliente (localArriba = false) vive abajo. Así las copias
             // de ambos mundos concuerdan y la red puede espejar movimientos por casilla.
+            // ESCENARIO: 1 base local + N bases enemigas en los BORDES del mapa
+            // (repartidas y separadas: centro enemigo, esquinas y laterales).
+            // El mundo es IDÉNTICO en ambas máquinas (mismas coordenadas absolutas);
+            // solo cambia qué lado es "local". Con N=1 queda el clásico de siempre.
+            // Avanzado = Cuartel operativo + 2 soldados por base desde el minuto 0.
+            int frentes = Math.Max(1, Math.Min(5, basesEnemigas));
             int centroX = Mapa.Ancho / 2;
-            int centroLocalY = localArriba ? 1 : Mapa.Alto - 2;
-            int centroEnemigoY = localArriba ? Mapa.Alto - 2 : 1;
-            int aldeanoLocalY = centroLocalY;
-            int aldeanoEnemigoY = centroEnemigoY;
+            // El Centro ocupa 3x3: ancla en y=1 (arriba) o y=Alto-3 (abajo).
+            int centroLocalY = localArriba ? 1 : Mapa.Alto - 3;
+            int centroEnemigoY = localArriba ? Mapa.Alto - 3 : 1;
+            // Aldeanos iniciales 3 casillas hacia el centro (no pegados al borde).
+            int aldeanoLocalY = localArriba ? centroLocalY + 3 : centroLocalY - 3;
 
             Edificio centroLocal = DatosDelJuego.CrearCentroUrbano(centroX, centroLocalY);
-            Edificio centroEnemigo = DatosDelJuego.CrearCentroUrbano(centroX, centroEnemigoY);
             JugadorLocal.AgregarEdificio(centroLocal);
-            JugadorEnemigo.AgregarEdificio(centroEnemigo);
-
             JugadorLocal.AgregarUnidad(DatosDelJuego.CrearUnidad(TipoUnidad.Aldeano, centroX - 1, aldeanoLocalY));
-            JugadorEnemigo.AgregarUnidad(DatosDelJuego.CrearUnidad(TipoUnidad.Aldeano, centroX - 1, aldeanoEnemigoY));
+            if (jugadorAvanzado) EquiparBaseAvanzada(JugadorLocal, false, centroX, centroLocalY);
+            // Inicio rico: el jugador arranca con colchón de recursos, 2
+            // aldeanos extra y una Casa operativa (si hay hueco). El enemigo no.
+            if (inicioRico) DarInicioRico(JugadorLocal, centroX, centroLocalY, aldeanoLocalY);
+
+            // Puestos enemigos en orden de dispersión; se valida hueco real.
+            int[][] puestos = new int[][]
+            {
+                new int[] { 50, 97 }, new int[] { 8, 8 }, new int[] { 90, 8 },
+                new int[] { 8, 50 }, new int[] { 90, 50 },
+                new int[] { 30, 90 }, new int[] { 70, 90 }
+            };
+            int colocadas = 0;
+            foreach (int[] p in puestos)
+            {
+                if (colocadas >= frentes) break;
+                // El puesto 0 es el clásico (ancla del otro lado según la máquina).
+                int px = colocadas == 0 ? centroX : p[0];
+                int py = colocadas == 0 ? centroEnemigoY : p[1];
+                if (!Tablero.EsAreaEdificable(px, py, 3, JugadorLocal, JugadorEnemigo)) continue;
+                string faccion = DatosDelJuego.FaccionEnemiga(colocadas);
+                Edificio centro = DatosDelJuego.CrearCentroUrbano(px, py);
+                centro.Faccion = faccion;
+                JugadorEnemigo.AgregarEdificio(centro);
+                if (CapitalEnemiga == null) CapitalEnemiga = centro; // la primera es la capital
+                FaccionesRivales.Add(faccion);
+                if (colocadas == 0)
+                {
+                    int aldeanoY = localArriba ? py - 3 : py + 3;
+                    JugadorEnemigo.AgregarUnidad(DatosDelJuego.CrearUnidad(TipoUnidad.Aldeano, px - 1, aldeanoY));
+                }
+                if (enemigoAvanzado) EquiparBaseAvanzada(JugadorEnemigo, true, px, py);
+                colocadas++;
+            }
+
+            JugadorEnemigo.Nombre = FaccionesRivales.Count > 0
+                ? string.Join(" + ", FaccionesRivales)
+                : "Enemigo";
+
+            // Fauna neutral: ciervos en los puestos de caza libres.
+            foreach (var p in DatosDelJuego.PuestosCaza())
+            {
+                if (!Tablero.EsCasillaLibre(p.X, p.Y, JugadorLocal, JugadorEnemigo)) continue;
+                if (Tablero.CasillaTieneRecurso(p.X, p.Y)) continue;
+                Unidad ciervo = DatosDelJuego.CrearUnidad(TipoUnidad.Ciervo, p.X, p.Y);
+                Fauna.Add(ciervo);
+            }
 
             GestorArchivos.GuardarConfiguracionInicial(
                 $"Jugador: {nombreJugador} | Mapa: {Mapa.Ancho}x{Mapa.Alto} | " +
                 $"Centro local ({centroLocal.PosicionX},{centroLocal.PosicionY}) | " +
-                $"Centro enemigo ({centroEnemigo.PosicionX},{centroEnemigo.PosicionY})");
+                $"Frentes enemigos: {frentes} (avanzado={enemigoAvanzado}) | Yo avanzado={jugadorAvanzado} | " +
+                $"Ritmo={ritmo} | Inicio rico={inicioRico}");
             GestorArchivos.RegistrarAccion(nombreJugador, "Inicio", "Partida inicializada.");
+            AplicarRitmo(ritmo);
+        }
+
+        // Ritmo de partida: Rápida = guerra a los 60 s e IA al 85% de daño;
+        // Normal = valores clásicos (180 s, 60%); Larga = 7 min de paz e IA
+        // al 45% para una partida épica. Se puede cambiar en caliente.
+        public void AplicarRitmo(RitmoPartida ritmo)
+        {
+            lock (Candado)
+            {
+                switch (ritmo)
+                {
+                    case RitmoPartida.Rapida:
+                        GraciaMilitarSegundos = 60;
+                        FactorDanoIA = 0.85;
+                        break;
+                    case RitmoPartida.Larga:
+                        GraciaMilitarSegundos = 420;
+                        FactorDanoIA = 0.45;
+                        break;
+                    default:
+                        GraciaMilitarSegundos = 180;
+                        FactorDanoIA = 0.6;
+                        break;
+                }
+                GestorArchivos.RegistrarAccion(JugadorLocal.Nombre, "Ritmo",
+                    $"Ritmo {ritmo}: gracia {GraciaMilitarSegundos} s, daño IA {(int)(FactorDanoIA * 100)}%.");
+            }
+        }
+
+        // Inicio rico: colchón de recursos + 2 aldeanos extra + Casa operativa
+        // (mejor esfuerzo: si no hay hueco, solo recursos y aldeanos).
+        private void DarInicioRico(Jugador dueno, int bx, int by, int aldeanoY)
+        {
+            dueno.Recibir(250, 150, 250, 50, 50);
+            int[][] huecos = { new int[] { bx + 1, aldeanoY }, new int[] { bx - 2, aldeanoY } };
+            foreach (int[] h in huecos)
+            {
+                if (!Tablero.EsCasillaLibre(h[0], h[1], JugadorLocal, JugadorEnemigo)) continue;
+                if (Tablero.CasillaTieneRecurso(h[0], h[1])) continue;
+                dueno.AgregarUnidad(DatosDelJuego.CrearUnidad(TipoUnidad.Aldeano, h[0], h[1]));
+            }
+            int[][] candidatos =
+            {
+                new int[] { bx + 5, by }, new int[] { bx - 6, by },
+                new int[] { bx, by + 5 }, new int[] { bx, by - 5 }
+            };
+            foreach (int[] c in candidatos)
+            {
+                if (!Tablero.EsAreaEdificable(c[0], c[1], DatosDelJuego.LadoSegunTipo(TipoEdificio.Casa), JugadorLocal, JugadorEnemigo)) continue;
+                dueno.AgregarEdificio(DatosDelJuego.CrearEdificio(TipoEdificio.Casa, c[0], c[1], operativo: true));
+                break;
+            }
+            GestorArchivos.RegistrarAccion(dueno.Nombre, "Inicio",
+                "Inicio rico: +recursos, aldeanos extra y Casa operativa.");
+        }
+
+        // Equipa una base avanzada: Cuartel operativo cercano + 2 soldados en
+        // huecos libres (mejor esfuerzo: si no hay sitio, solo lo que quepa).
+        private void EquiparBaseAvanzada(Jugador dueno, bool esEnemigo, int bx, int by)
+        {
+            int[][] candidatos =
+            {
+                new int[] { bx + 4, by }, new int[] { bx - 5, by },
+                new int[] { bx, by + 4 }, new int[] { bx, by - 4 }
+            };
+            foreach (int[] c in candidatos)
+            {
+                if (!Tablero.EsAreaEdificable(c[0], c[1], DatosDelJuego.LadoSegunTipo(TipoEdificio.Cuartel), JugadorLocal, JugadorEnemigo)) continue;
+                Edificio cuartel = DatosDelJuego.CrearEdificio(TipoEdificio.Cuartel, c[0], c[1], operativo: true);
+                dueno.AgregarEdificio(cuartel);
+                break;
+            }
+            int puestos = 0;
+            for (int radio = 1; radio <= 4 && puestos < 2; radio++)
+                for (int dx = -radio; dx <= radio && puestos < 2; dx++)
+                    for (int dy = -radio; dy <= radio && puestos < 2; dy++)
+                    {
+                        if (Math.Abs(dx) != radio && Math.Abs(dy) != radio) continue;
+                        int x = bx + dx, y = by + dy;
+                        if (!Tablero.EsCasillaLibre(x, y, JugadorLocal, JugadorEnemigo)) continue;
+                        if (Tablero.CasillaTieneRecurso(x, y)) continue;
+                        Unidad s = DatosDelJuego.CrearUnidad(TipoUnidad.Soldado, x, y);
+                        s.ControladaPorIA = esEnemigo;
+                        dueno.AgregarUnidad(s);
+                        puestos++;
+                    }
         }
 
         // API PARA LA VISTA (Unity)
@@ -209,6 +383,7 @@ namespace Modelo
                 return new InstantaneaJuego(
                     new List<Unidad>(JugadorLocal.Unidades),
                     new List<Unidad>(JugadorEnemigo.Unidades),
+                    new List<Unidad>(Fauna),
                     new List<Edificio>(JugadorLocal.Edificios),
                     new List<Edificio>(JugadorEnemigo.Edificios),
                     new List<Recurso>(Tablero.RecursosEnMapa),
@@ -216,7 +391,8 @@ namespace Modelo
                     JugadorLocal.Oro, JugadorLocal.Madera, JugadorLocal.Comida, JugadorLocal.Hierro, JugadorLocal.Piedra,
                     EstadoPartida.TiempoJuegoSegundos,
                     EstadoPartida.EnEjecucion,
-                    EstadoPartida.GanadorNombre);
+                    EstadoPartida.GanadorNombre,
+                    EstadoPartida.MotivoVictoria);
             }
         }
 
@@ -239,6 +415,21 @@ namespace Modelo
 
         public bool IAActiva => _ia != null && _ia.Activa;
 
+        // [PVE→Red] Apaga SOLO la IA (para pasar a PvP sin tumbar la partida).
+        // No cancela reloj/spawner: el motor sigue corriendo.
+        public bool DetenerIA()
+        {
+            lock (Candado)
+            {
+                if (_ia == null) return false;
+                _ia.Detener();
+                _ia = null;
+                GestorArchivos.RegistrarAccion(JugadorEnemigo.Nombre, "IA",
+                    "IA enemiga detenida (cambio a modo red/PvP).");
+                return true;
+            }
+        }
+
         // [Concurrencia] APAGA el motor: cancela el reloj, el spawner, la IA y todos
         // los trabajos en curso (entrenamientos y recolecciones). La Vista/Unity debe
         // llamar esto al salir de la escena o del modo Play, para no dejar Tasks
@@ -249,18 +440,83 @@ namespace Modelo
             _ia?.Detener();
             _ctsReloj.Cancel();
             _ctsSpawner.Cancel();
+            _ctsEconomia.Cancel();
             _ctsSimulacion.Cancel();
             _ctsEfectosTemporales.Cancel();
+            _ctsFauna.Cancel();
 
+            // [Concurrencia] Foto de los trabajos bajo el candado y Cancel FUERA:
+            // Cancel() dispara callbacks síncronos y nunca debe correr con el
+            // candado del mundo tomado (reentrada al iterar los diccionarios).
+            List<CancellationTokenSource> trabajos;
             lock (Candado)
             {
                 EstadoPartida.EnEjecucion = false;
-                foreach (CancellationTokenSource cts in _entrenamientosActivos.Values) cts.Cancel();
-                foreach (CancellationTokenSource cts in _construccionesActivas.Values) cts.Cancel();
-                foreach (CancellationTokenSource cts in _recolectoresActivos.Values) cts.Cancel();
+                trabajos = new List<CancellationTokenSource>(
+                    _entrenamientosActivos.Count +
+                    _construccionesActivas.Count +
+                    _recolectoresActivos.Count);
+                trabajos.AddRange(_entrenamientosActivos.Values);
+                trabajos.AddRange(_construccionesActivas.Values);
+                trabajos.AddRange(_recolectoresActivos.Values);
                 _entrenamientosActivos.Clear();
                 _construccionesActivas.Clear();
                 _recolectoresActivos.Clear();
+            }
+            foreach (CancellationTokenSource cts in trabajos)
+                cts.Cancel();
+        }
+
+        // [Concurrencia] FAUNA: cada ~2 s cada ciervo vivo da un paso aleatorio
+        // a una casilla vecina transitable y sin yacimiento (las unidades no
+        // estorban). Todo bajo lock(Candado); la Vista los desliza al correr.
+        private async Task VagarFaunaAsync()
+        {
+            while (!_ctsFauna.IsCancellationRequested)
+            {
+                try { await Task.Delay(1800 + _rngFauna.Next(0, 900), _ctsFauna.Token); }
+                catch (TaskCanceledException) { break; }
+
+                lock (Candado)
+                {
+                    if (_detenido || !EstadoPartida.EnEjecucion) continue;
+                    foreach (Unidad ciervo in Fauna)
+                    {
+                        if (ciervo == null || !ciervo.EstaViva) continue;
+                        if (_rngFauna.NextDouble() > 0.65) continue;
+                        int nx = ciervo.PosicionX + _rngFauna.Next(-1, 2);
+                        int ny = ciervo.PosicionY + _rngFauna.Next(-1, 2);
+                        if (!Tablero.EsTransitable(nx, ny, JugadorLocal, JugadorEnemigo)) continue;
+                        if (Tablero.CasillaTieneRecurso(nx, ny)) continue;
+                        ciervo.MoverA(nx, ny);
+                    }
+                }
+            }
+        }
+
+        // [Concurrencia] ECONOMÍA PASIVA: cada 4 s, cada Casa operativa da
+        // 1 de comida y cada Centro Urbano operativo da 1 de oro a su dueño
+        // (ambos jugadores por igual). Todo bajo lock(Candado).
+        private async Task EconomiaPasivaAsync()
+        {
+            while (!_ctsEconomia.IsCancellationRequested)
+            {
+                try { await Task.Delay(4000, _ctsEconomia.Token); }
+                catch (TaskCanceledException) { break; }
+
+                lock (Candado)
+                {
+                    if (_detenido || !EstadoPartida.EnEjecucion) continue;
+                    foreach (Jugador dueno in new Jugador[] { JugadorLocal, JugadorEnemigo })
+                    {
+                        foreach (Edificio e in dueno.Edificios)
+                        {
+                            if (!e.EstaOperativo) continue;
+                            if (e.Tipo == TipoEdificio.Casa) dueno.Recibir(0, 0, 1, 0, 0);
+                            else if (e.Tipo == TipoEdificio.CentroUrbano) dueno.Recibir(0, 1, 0, 0, 0);
+                        }
+                    }
+                }
             }
         }
 
@@ -411,9 +667,9 @@ namespace Modelo
             lock (Candado)
             {
                 if (_detenido || !EstadoPartida.EnEjecucion) return false;
-                if (!Tablero.EsCoordenadaValida(x, y)) return false;
-                if (Tablero.CasillaTieneRecurso(x, y)) return false;
-                if (!Tablero.EsCasillaLibre(x, y, JugadorLocal, JugadorEnemigo)) return false;
+                // La huella (Lado x Lado) debe caber libre y sin yacimientos.
+                int lado = DatosDelJuego.LadoSegunTipo(tipo);
+                if (!Tablero.EsAreaEdificable(x, y, lado, JugadorLocal, JugadorEnemigo)) return false;
 
                 EdificioConfig config = DatosDelJuego.EdificiosBase[tipo];
                 if (!dueno.Gastar(config.CostoMadera, config.CostoOro, config.CostoComida, config.CostoHierro, config.CostoPiedra))
@@ -619,6 +875,107 @@ namespace Modelo
             }
         }
 
+        // MERCADO (trueque con tasa, solo jugador local): vende 100 de un
+        // recurso por 60 de oro, o compra 100 por 75 de oro. El oro no se vende.
+        public bool VenderRecurso(TipoRecurso tipo)
+        {
+            lock (Candado)
+            {
+                if (_detenido || !EstadoPartida.EnEjecucion) return false;
+                if (tipo == TipoRecurso.Oro) return false;
+                if (!QuitarDe(JugadorLocal, tipo, 100)) return false;
+                JugadorLocal.Recibir(0, 60, 0, 0, 0);
+                GestorArchivos.RegistrarAccion(JugadorLocal.Nombre, "Mercado",
+                    $"Vendió 100 de {tipo} por 60 de oro.");
+                return true;
+            }
+        }
+
+        public bool ComprarRecurso(TipoRecurso tipo)
+        {
+            lock (Candado)
+            {
+                if (_detenido || !EstadoPartida.EnEjecucion) return false;
+                if (tipo == TipoRecurso.Oro) return false;
+                if (!JugadorLocal.Gastar(0, 75, 0, 0, 0)) return false;
+                DarA(JugadorLocal, tipo, 100);
+                GestorArchivos.RegistrarAccion(JugadorLocal.Nombre, "Mercado",
+                    $"Compró 100 de {tipo} por 75 de oro.");
+                return true;
+            }
+        }
+
+        private static int CantidadDe(Jugador j, TipoRecurso tipo)
+        {
+            switch (tipo)
+            {
+                case TipoRecurso.Madera: return j.Madera;
+                case TipoRecurso.Oro: return j.Oro;
+                case TipoRecurso.Comida: return j.Comida;
+                case TipoRecurso.Hierro: return j.Hierro;
+                default: return j.Piedra;
+            }
+        }
+
+        private static bool QuitarDe(Jugador j, TipoRecurso tipo, int cantidad)
+        {
+            if (CantidadDe(j, tipo) < cantidad) return false;
+            switch (tipo)
+            {
+                case TipoRecurso.Madera: j.Madera -= cantidad; break;
+                case TipoRecurso.Oro: j.Oro -= cantidad; break;
+                case TipoRecurso.Comida: j.Comida -= cantidad; break;
+                case TipoRecurso.Hierro: j.Hierro -= cantidad; break;
+                default: j.Piedra -= cantidad; break;
+            }
+            return true;
+        }
+
+        private static void DarA(Jugador j, TipoRecurso tipo, int cantidad)
+        {
+            switch (tipo)
+            {
+                case TipoRecurso.Madera: j.Recibir(cantidad, 0, 0, 0, 0); break;
+                case TipoRecurso.Oro: j.Recibir(0, cantidad, 0, 0, 0); break;
+                case TipoRecurso.Comida: j.Recibir(0, 0, cantidad, 0, 0); break;
+                case TipoRecurso.Hierro: j.Recibir(0, 0, 0, cantidad, 0); break;
+                default: j.Recibir(0, 0, 0, 0, cantidad); break;
+            }
+        }
+
+        // HERRERÍA (solo jugador local): 3 ramas x 3 niveles. Ataque +1/tropa,
+        // defensa +1 y recolección +10% por nivel. La IA no mejora.
+        public bool MejorarAtaque() => Mejorar(0,
+            () => { JugadorLocal.MejoraAtaque++; JugadorLocal.BonoAtaque++; });
+
+        public bool MejorarDefensa() => Mejorar(1,
+            () => { JugadorLocal.MejoraDefensa++; JugadorLocal.DefensaBonus++; });
+
+        public bool MejorarRecoleccion() => Mejorar(2,
+            () => { JugadorLocal.MejoraRecoleccion++; JugadorLocal.BonusRecoleccion += 0.10; });
+
+        private bool Mejorar(int rama, System.Action aplicar)
+        {
+            lock (Candado)
+            {
+                if (_detenido || !EstadoPartida.EnEjecucion) return false;
+                int nivel = rama == 0 ? JugadorLocal.MejoraAtaque
+                    : rama == 1 ? JugadorLocal.MejoraDefensa : JugadorLocal.MejoraRecoleccion;
+                if (nivel < 0 || nivel >= 3) return false;
+                int m = DatosDelJuego.CostosMejora[rama][nivel, 0];
+                int o = DatosDelJuego.CostosMejora[rama][nivel, 1];
+                int c = DatosDelJuego.CostosMejora[rama][nivel, 2];
+                int h = DatosDelJuego.CostosMejora[rama][nivel, 3];
+                int p = DatosDelJuego.CostosMejora[rama][nivel, 4];
+                if (!JugadorLocal.Gastar(m, o, c, h, p)) return false;
+                aplicar();
+                string[] nombres = { "Ataque", "Defensa", "Recolección" };
+                GestorArchivos.RegistrarAccion(JugadorLocal.Nombre, "Herrería",
+                    $"Mejora de {nombres[rama]} al nivel {nivel + 1}.");
+                return true;
+            }
+        }
+
         private async Task RecoleccionTaskAsync(Unidad aldeano, Recurso recurso, Jugador dueno, CancellationToken token)
         {
             int cantidadPorCiclo = DatosDelJuego.UnidadesBase[aldeano.Tipo].CapacidadRecoleccion;
@@ -637,6 +994,10 @@ namespace Modelo
 
                     // [Items] Pasivo Herramientas: +5% de lo recolectado por ciclo.
                     cantidad += (int)Math.Round(cantidad * dueno.BonusRecoleccion);
+
+                    // [Biomas] Los yacimientos en arena/bosque rinden +50%.
+                    if (DatosDelJuego.EnBioma(recurso.PosicionX, recurso.PosicionY))
+                        cantidad += (int)Math.Round(cantidad * DatosDelJuego.BonusBioma);
 
                     EntregarRecurso(dueno, recurso.Tipo, cantidad);
                     GestorArchivos.RegistrarAccion(
@@ -693,9 +1054,14 @@ namespace Modelo
             {
                 if (_detenido || !EstadoPartida.EnEjecucion) return false;
                 if (atacante == null || enemigo == null) return false;
+                // La víctima puede ser rival o fauna neutral (ciervo).
                 if (!JugadorLocal.Unidades.Contains(atacante) ||
-                    !JugadorEnemigo.Unidades.Contains(enemigo)) return false;
-                if (!atacante.PuedeAtacar || !enemigo.EstaViva) return false;
+                    (!JugadorEnemigo.Unidades.Contains(enemigo) && !Fauna.Contains(enemigo))) return false;
+                // Los aldeanos también pueden cazar ciervos (solo a ellos).
+                bool cazaAldeana = enemigo.Tipo == TipoUnidad.Ciervo
+                    && atacante.EsRecolector && atacante.EstaViva;
+                if (!atacante.PuedeAtacar && !cazaAldeana) return false;
+                if (!enemigo.EstaViva) return false;
 
                 // Fuera de rango (o enfriando): fija objetivo y DESTINO a la
                 // casilla del enemigo (es transitable aunque haya otras unidades).
@@ -727,7 +1093,9 @@ namespace Modelo
             Unidad obj = u.Objetivo;
             if (obj == null) return;
             if (!obj.EstaViva) { u.Objetivo = null; return; }
-            if (!u.PuedeAtacar) return;
+            // Los aldeanos también cazan (solo ciervos, lo demás lo rechaza Atacar).
+            bool cazaAldeana = obj.Tipo == TipoUnidad.Ciervo && u.EsRecolector && u.EstaViva;
+            if (!u.PuedeAtacar && !cazaAldeana) return;
             if (u.TiempoEsperaAtaque > 0) return;
             if (Distancia(u, obj) > u.RangoAtaque) return;
 
@@ -747,12 +1115,16 @@ namespace Modelo
             {
                 if (_detenido || !EstadoPartida.EnEjecucion) return false;
                 if (atacante == null || enemigo == null) return false;
+                // La víctima puede ser rival o fauna neutral (ciervo).
+                bool esCaza = Fauna.Contains(enemigo);
                 if (!JugadorLocal.Unidades.Contains(atacante) ||
-                    !JugadorEnemigo.Unidades.Contains(enemigo)) return false;
-                if (!atacante.PuedeAtacar || !enemigo.EstaViva) return false;
+                    (!JugadorEnemigo.Unidades.Contains(enemigo) && !esCaza)) return false;
+                // Los aldeanos también pueden cazar ciervos (solo a ellos).
+                bool cazaAldeana = esCaza && atacante.EsRecolector && atacante.EstaViva;
+                if ((!atacante.PuedeAtacar && !cazaAldeana) || !enemigo.EstaViva) return false;
 
                 int distancia = Math.Abs(atacante.PosicionX - enemigo.PosicionX)
-                              + Math.Abs(atacante.PosicionY - enemigo.PosicionY);
+                               + Math.Abs(atacante.PosicionY - enemigo.PosicionY);
                 if (distancia > atacante.RangoAtaque) return false; // fuera de alcance
 
                 atacante.LimpiarDestino(); // orden de combate: corta cualquier viaje
@@ -760,17 +1132,22 @@ namespace Modelo
                 atacante.TiempoEsperaAtaque = TicksEntreAtaques; // enfriamiento compartido
                 // El objetivo sigue vivo para repetir golpes cuando se enfríe.
 
-                // [Items] Ataque con posible Espada (AtaqueTotal) y defensa con el
-                // posible Casco del defensor. El daño se calcula UNA vez y se manda:
-                // cada copia restará exactamente lo mismo (RecibirGolpe = daño plano).
-                int danoReal = Math.Max(0, atacante.AtaqueTotal -
-                    (enemigo.Defensa + (JugadorEnemigo.Unidades.Contains(enemigo)
-                        ? JugadorEnemigo.DefensaBonus : JugadorLocal.DefensaBonus)));
+                // [Items] Ataque con posible Espada (AtaqueTotal), herrería
+                // (BonoAtaque) y defensa con el posible Casco del defensor.
+                // El daño se calcula UNA vez y se manda: cada copia restará
+                // exactamente lo mismo (RecibirGolpe = daño plano).
+                // La caza no tiene bonus de nadie; la red no se entera (fauna local).
+                int bonus = esCaza ? 0 : (JugadorEnemigo.Unidades.Contains(enemigo)
+                    ? JugadorEnemigo.DefensaBonus : JugadorLocal.DefensaBonus);
+                int danoReal = Math.Max(0, atacante.AtaqueTotal + JugadorLocal.BonoAtaque - (enemigo.Defensa + bonus));
                 enemigo.RecibirGolpe(danoReal);
 
-                // El Modelo avisa del ataque (con su daño ya calculado) para la red.
-                Transmitir(
-                    $"ATACAR;{atacante.PosicionX};{atacante.PosicionY};{enemigo.PosicionX};{enemigo.PosicionY};{danoReal}");
+                if (!esCaza)
+                {
+                    // El Modelo avisa del ataque (con su daño ya calculado) para la red.
+                    Transmitir(
+                        $"ATACAR;{atacante.PosicionX};{atacante.PosicionY};{enemigo.PosicionX};{enemigo.PosicionY};{danoReal}");
+                }
                 GestorArchivos.RegistrarAccion(
                     JugadorLocal.Nombre,
                     "Ataque",
@@ -783,12 +1160,24 @@ namespace Modelo
 
                 if (!enemigo.EstaViva)
                 {
-                    JugadorEnemigo.EliminarUnidad(enemigo);
-                    GestorArchivos.RegistrarAccion(
-                        JugadorLocal.Nombre,
-                        "Ataque",
-                        $"Impacto - {enemigo.Tipo} enemigo destruido");
-                    VerificarGanador();
+                    if (esCaza)
+                    {
+                        Fauna.Remove(enemigo);
+                        JugadorLocal.Recibir(0, 0, 100, 0, 0);
+                        GestorArchivos.RegistrarAccion(
+                            JugadorLocal.Nombre,
+                            "Caza",
+                            "Ciervo cazado: +100 de comida.");
+                    }
+                    else
+                    {
+                        JugadorEnemigo.EliminarUnidad(enemigo);
+                        GestorArchivos.RegistrarAccion(
+                            JugadorLocal.Nombre,
+                            "Ataque",
+                            $"Impacto - {enemigo.Tipo} enemigo destruido");
+                        VerificarGanador();
+                    }
                 }
                 return true;
             }
@@ -805,20 +1194,22 @@ namespace Modelo
                 if (!atacante.PuedeAtacar || !edificioEnemigo.EstaViva) return false;
                 if (!JugadorEnemigo.Edificios.Contains(edificioEnemigo)) return false;
 
-                int distancia = Math.Abs(atacante.PosicionX - edificioEnemigo.PosicionX)
-                              + Math.Abs(atacante.PosicionY - edificioEnemigo.PosicionY);
+                // Alcance a la HUELLA (no al ancla): pegar pegado a cualquier
+                // casilla del edificio vale, aunque el ancla quede a 2.
+                int distancia = DistanciaAEdificio(atacante, edificioEnemigo);
                 if (distancia > atacante.RangoAtaque) return false;
 
                 atacante.LimpiarDestino(); // orden de combate: corta cualquier viaje
                 atacante.Estado = EstadoUnidad.Atacando;
                 atacante.TiempoEsperaAtaque = TicksEntreAtaques;
-                // [Items] El ataque suma la Espada (AtaqueTotal) si va equipada.
-                edificioEnemigo.RecibirDano(atacante.AtaqueTotal);
+                // [Items] El ataque suma la Espada (AtaqueTotal) y la herrería
+                // (BonoAtaque) si van equipadas/mejoradas.
+                edificioEnemigo.RecibirDano(atacante.AtaqueTotal + JugadorLocal.BonoAtaque);
 
                 // Se envía el ATAQUE (no el daño final): el rival aplica la MISMA fórmula
                 // con su copia del edificio y los dos lados coinciden.
                 Transmitir($"ATACAR_EDIFICIO;{atacante.PosicionX};{atacante.PosicionY};" +
-                             $"{edificioEnemigo.PosicionX};{edificioEnemigo.PosicionY};{atacante.AtaqueTotal}");
+                             $"{edificioEnemigo.PosicionX};{edificioEnemigo.PosicionY};{atacante.AtaqueTotal + JugadorLocal.BonoAtaque}");
 
                 GestorArchivos.RegistrarAccion(JugadorLocal.Nombre, "Ataque",
                     $"{atacante.Tipo} atacó {edificioEnemigo.Tipo} (vida restante {edificioEnemigo.Vida}).");
@@ -840,30 +1231,51 @@ namespace Modelo
         {
             lock (Candado)
             {
-                if (JugadorDerrotado(JugadorEnemigo))
+                if (!EstadoPartida.EnEjecucion) return; // ya hay ganador: no refinalizar
+                string causaEnemigo = CausaDerrota(JugadorEnemigo, esEnemigo: true);
+                if (causaEnemigo != null)
                 {
-                    FinalizarPartida(JugadorLocal);
+                    FinalizarPartida(JugadorLocal, causaEnemigo);
                 }
-                else if (JugadorDerrotado(JugadorLocal))
+                else
                 {
-                    FinalizarPartida(JugadorEnemigo);
+                    string causaLocal = CausaDerrota(JugadorLocal, esEnemigo: false);
+                    if (causaLocal != null)
+                        FinalizarPartida(JugadorEnemigo, causaLocal);
                 }
             }
         }
 
-        private bool JugadorDerrotado(Jugador jugador)
+        // REGICIDIO (asimétrico, porque la IA no asedia edificios):
+        // · El ENEMIGO cae al perder su capital, aunque le queden tropas o
+        //   bases menores (puede reponerse: hay que rematar la capital).
+        // · El JUGADOR cae si pierde su Centro o se queda sin unidades.
+        // Devuelve la causa o null si ese lado sigue vivo.
+        private string CausaDerrota(Jugador jugador, bool esEnemigo)
         {
-            bool sinCentroUrbano = !jugador.Edificios.Exists(
+            if (esEnemigo)
+            {
+                if (CapitalEnemiga != null)
+                    return CapitalEnemiga.EstaViva ? null : "¡Capital enemiga destruida!";
+                bool sinCentro = !jugador.Edificios.Exists(
+                    e => e.Tipo == TipoEdificio.CentroUrbano && e.Vida > 0);
+                return sinCentro ? "¡Centro enemigo destruido!" : null;
+            }
+            bool sinCentroPropio = !jugador.Edificios.Exists(
                 e => e.Tipo == TipoEdificio.CentroUrbano && e.Vida > 0);
-            bool sinUnidades = jugador.Unidades.Count == 0;
-            return sinCentroUrbano || sinUnidades;
+            if (sinCentroPropio) return "¡Tu Centro Urbano ha caído!";
+            if (jugador.Unidades.Count == 0) return "¡Tu ejército ha sido aniquilado!";
+            return null;
         }
 
-        private void FinalizarPartida(Jugador ganador)
+        private bool JugadorDerrotado(Jugador jugador) =>
+            CausaDerrota(jugador, jugador == JugadorEnemigo) != null;
+
+        private void FinalizarPartida(Jugador ganador, string causa)
         {
-            EstadoPartida.Finalizar(ganador.Nombre);
-            GestorArchivos.RegistrarAccion(ganador.Nombre, "Victoria", "Partida terminada.");
-            GestorArchivos.GuardarResultadoFinal($"¡Ganador: {ganador.Nombre}!");
+            EstadoPartida.Finalizar(ganador.Nombre, causa);
+            GestorArchivos.RegistrarAccion(ganador.Nombre, "Victoria", $"Partida terminada. {causa}");
+            GestorArchivos.GuardarResultadoFinal($"¡Ganador: {ganador.Nombre}! {causa}");
         }
 
         // ITEMS (objetos del mapa, generados por concurrencia)
@@ -1204,6 +1616,22 @@ namespace Modelo
                 if (u.Objetivo != null)
                     ProcesarObjetivoDe(u, dueno);
 
+                // [Persecución] Con objetivo vivo fuera de rango, el destino es
+                // SIEMPRE su casilla actual: el ciervo vaga y la casilla vieja
+                // queda obsoleta (antes el aldeano llegaba, no pegaba y se
+                // quedaba quieto para siempre). Solo unidades del jugador
+                // dirigidas por él (!ControladaPorIA: la IA mueve lo suyo en
+                // ResolverTick) y sin otra tarea pendiente al llegar.
+                if (u.Objetivo != null && u.Objetivo.EstaViva && !u.ControladaPorIA
+                    && u.ItemAlLlegar == null && u.RecursoAlLlegar == null
+                    && (u.PuedeAtacar || (u.Objetivo.Tipo == TipoUnidad.Ciervo && u.EsRecolector))
+                    && Distancia(u, u.Objetivo) > u.RangoAtaque
+                    && (u.DestinoX != u.Objetivo.PosicionX || u.DestinoY != u.Objetivo.PosicionY))
+                {
+                    u.FijarDestino(u.Objetivo.PosicionX, u.Objetivo.PosicionY);
+                    u.Estado = EstadoUnidad.Moviendo;
+                }
+
                 if (!u.TieneDestino) continue;
 
                 if (u.PosicionX == u.DestinoX && u.PosicionY == u.DestinoY)
@@ -1314,8 +1742,10 @@ namespace Modelo
             u.LimpiarDestino(); // primero limpia (también los pendientes)
 
             // [Combate] Llegó a la casilla del objetivo (o ya estaba en rango):
-            // pega de inmediato si puede.
-            if (u.Objetivo != null && u.Objetivo.EstaViva && u.PuedeAtacar &&
+            // pega de inmediato si puede (los aldeanos también cazan ciervos).
+            bool cazaAlLlegar = u.Objetivo != null && u.Objetivo.EstaViva
+                && u.Objetivo.Tipo == TipoUnidad.Ciervo && u.EsRecolector && u.EstaViva;
+            if (u.Objetivo != null && u.Objetivo.EstaViva && (u.PuedeAtacar || cazaAlLlegar) &&
                 Distancia(u, u.Objetivo) <= u.RangoAtaque && u.TiempoEsperaAtaque <= 0)
             {
                 ProcesarObjetivoDe(u, dueno);
@@ -1393,7 +1823,26 @@ namespace Modelo
                 return;
             }
 
+            // Gracia PVE: con IA directora sus tropas no INICIAN ataques hasta
+            // el minuto de gracia (se preparan pero no pegan). Sin IA (batalla
+            // de mentira) no aplica. Tus ataques valen siempre.
+            if (_ia != null && EstadoPartida.TiempoJuegoSegundos < GraciaMilitarSegundos)
+            {
+                u.Objetivo = null;
+                return;
+            }
+
             Unidad objetivo = EnemigoMasCercano(u, rival);
+            // ASEDIO (solo con IA directora): sin tropas enemigas CERCA, la
+            // máquina no se queda quieta: marcha sobre el Centro del rival y
+            // lo golpea (con su handicap). Así el jugador SÍ puede perder por
+            // su Centro y el regicidio vale en ambos sentidos. Las batallas de
+            // mentira (_ia == null) siguen como siempre.
+            if (_ia != null && (objetivo == null || Distancia(u, objetivo) > RadioAsedioIA))
+            {
+                AsediarCentro(u, rival, dueno);
+                return;
+            }
             if (objetivo == null) { u.Objetivo = null; return; }
             u.Objetivo = objetivo;
 
@@ -1402,7 +1851,7 @@ namespace Modelo
                 u.Estado = EstadoUnidad.Atacando;
                 if (u.TiempoEsperaAtaque == 0)
                 {
-                    pendientes.Add((objetivo, CalcularDano(u, objetivo, rival)));
+                    pendientes.Add((objetivo, CalcularDano(u, objetivo, dueno, rival)));
                     u.TiempoEsperaAtaque = TicksEntreAtaques;
                 }
                 return;
@@ -1432,14 +1881,82 @@ namespace Modelo
         private static int Distancia(Unidad a, Unidad b) =>
             Math.Abs(a.PosicionX - b.PosicionX) + Math.Abs(a.PosicionY - b.PosicionY);
 
-        private static int CalcularDano(Unidad atacante, Unidad defensor, Jugador duenoDefensor) =>
-            Math.Max(0, atacante.AtaqueTotal - (defensor.Defensa + duenoDefensor.DefensaBonus));
+        // Manhattan a la casilla más cercana de la huella (0 si la pisa).
+        private static int DistanciaAEdificio(Unidad u, Edificio e)
+        {
+            int dx = u.PosicionX < e.PosicionX ? e.PosicionX - u.PosicionX
+                : u.PosicionX >= e.PosicionX + e.Lado ? u.PosicionX - (e.PosicionX + e.Lado - 1) : 0;
+            int dy = u.PosicionY < e.PosicionY ? e.PosicionY - u.PosicionY
+                : u.PosicionY >= e.PosicionY + e.Lado ? u.PosicionY - (e.PosicionY + e.Lado - 1) : 0;
+            return dx + dy;
+        }
+
+        private int CalcularDano(Unidad atacante, Unidad defensor, Jugador duenoAtacante, Jugador duenoDefensor)
+        {
+            int bono = duenoAtacante == JugadorLocal ? duenoAtacante.BonoAtaque : 0;
+            int baseDano = Math.Max(0, atacante.AtaqueTotal + bono - (defensor.Defensa + duenoDefensor.DefensaBonus));
+            // Este método solo lo usa el bucle de la IA: handicap aplicado.
+            if (atacante.ControladaPorIA)
+                baseDano = (int)Math.Round(baseDano * FactorDanoIA);
+            return baseDano;
+        }
+
+        // Radio (casillas) sin tropas enemigas a partir del cual la IA deja
+        // de perseguir y ASEDIA el Centro rival. Ajustable (tests/PVE).
+        public int RadioAsedioIA { get; set; } = 15;
+
+        // Primer Centro Urbano vivo de ese jugador (objetivo del asedio).
+        private static Edificio CentroVivoDe(Jugador dueno)
+        {
+            foreach (Edificio e in dueno.Edificios)
+                if (e.Tipo == TipoEdificio.CentroUrbano && e.EstaViva) return e;
+            return null;
+        }
+
+        // La unidad de la IA marcha sobre el Centro rival y lo golpea con su
+        // handicap (misma fórmula que CalcularDano; RecibirDano quita la
+        // coraza). Corre dentro del candado: daño directo, sin pendientes.
+        private void AsediarCentro(Unidad u, Jugador rival, Jugador dueno)
+        {
+            u.Objetivo = null; // el objetivo es el edificio, no una unidad
+            Edificio centro = CentroVivoDe(rival);
+            if (centro == null) return;
+            if (DistanciaAEdificio(u, centro) <= u.RangoAtaque)
+            {
+                u.Estado = EstadoUnidad.Atacando;
+                if (u.TiempoEsperaAtaque > 0) return;
+                int bono = dueno == JugadorLocal ? dueno.BonoAtaque : 0;
+                int dano = (int)Math.Round(Math.Max(0, u.AtaqueTotal + bono) * FactorDanoIA);
+                centro.RecibirDano(dano);
+                u.TiempoEsperaAtaque = TicksEntreAtaques;
+                GestorArchivos.RegistrarAccion(dueno.Nombre, "Asedio",
+                    $"{u.Tipo} golpea el {centro.Tipo} rival (vida restante {centro.Vida}).");
+                if (!centro.EstaViva)
+                {
+                    rival.EliminarEdificio(centro);
+                    GestorArchivos.RegistrarAccion(dueno.Nombre, "Asedio", $"{centro.Tipo} rival destruido.");
+                    VerificarGanador();
+                }
+                return;
+            }
+            u.Estado = EstadoUnidad.Moviendo;
+            // Punto de la huella más cercano: la unidad se pega al edificio.
+            int tx = u.PosicionX < centro.PosicionX ? centro.PosicionX
+                : u.PosicionX >= centro.PosicionX + centro.Lado ? centro.PosicionX + centro.Lado - 1 : u.PosicionX;
+            int ty = u.PosicionY < centro.PosicionY ? centro.PosicionY
+                : u.PosicionY >= centro.PosicionY + centro.Lado ? centro.PosicionY + centro.Lado - 1 : u.PosicionY;
+            IntentarPasoHacia(u, tx, ty);
+        }
 
         // Da un paso de una casilla hacia el objetivo (primero el eje "más lejano").
-        private void IntentarPaso(Unidad u, Unidad objetivo)
+        private void IntentarPaso(Unidad u, Unidad objetivo) =>
+            IntentarPasoHacia(u, objetivo.PosicionX, objetivo.PosicionY);
+
+        // Paso hacia una COORDENADA (para asediar edificios: la huella).
+        private void IntentarPasoHacia(Unidad u, int metaX, int metaY)
         {
-            int difX = objetivo.PosicionX - u.PosicionX;
-            int difY = objetivo.PosicionY - u.PosicionY;
+            int difX = metaX - u.PosicionX;
+            int difY = metaY - u.PosicionY;
             int pasoX = Math.Sign(difX);
             int pasoY = Math.Sign(difY);
 
@@ -1480,24 +1997,49 @@ namespace Modelo
 
             VerificarGanador();
             VerificarFinBatalla();
+
+            // Reposición: DESPUÉS de verificar ganador (una derrota total no
+            // se evita con un aldeano nuevo; además Entrenar exige partida viva).
+            if (ReposicionAldeanos && EstadoPartida.EnEjecucion)
+            {
+                ReponerAldeanos(JugadorLocal, false);
+                ReponerAldeanos(JugadorEnemigo, true);
+            }
         }
 
-        // [Batalla] Empate técnico del modo batalla: si ya no queda NADIE que
-        // pueda pelear en ningún bando (solo civiles), el bucle se apaga en vez
-        // de latir para siempre. Con IA activa NO se apaga: la máquina repone
-        // ejército y la partida continúa.
+        private void ReponerAldeanos(Jugador dueno, bool esIA)
+        {
+            if (JugadorDerrotado(dueno)) return;
+            int aldeanos = 0;
+            foreach (Unidad u in dueno.Unidades)
+                if (u.EstaViva && u.Tipo == TipoUnidad.Aldeano) aldeanos++;
+            if (aldeanos >= 4) return;
+            bool ok = esIA
+                ? EntrenarUnidadIA(TipoUnidad.Aldeano, TipoEdificio.CentroUrbano)
+                : EntrenarUnidad(TipoUnidad.Aldeano, TipoEdificio.CentroUrbano);
+            if (ok) GestorArchivos.RegistrarAccion(dueno.Nombre, "Reposición",
+                "Aldeano en camino (reemplazo automático).");
+        }
+
+        // [Batalla] Fin del modo batalla (pieza decidida): si un flanco se
+        // queda sin combatientes controlados por IA, el bucle se apaga en vez
+        // de latir para siempre. Con regicidio, arrasar el ejército ya no da
+        // la victoria (hay que tumbar la capital), pero la pieza sí terminó.
+        // Con IA activa NO se apaga: la máquina repone ejército y la partida
+        // continúa.
         private void VerificarFinBatalla()
         {
             if (!BucleActivo || _ia != null || !EstadoPartida.EnEjecucion) return;
 
-            bool quedaCombatiente =
-                JugadorLocal.Unidades.Any(u => u.EstaViva && u.ControladaPorIA) ||
+            bool quedanLocal =
+                JugadorLocal.Unidades.Any(u => u.EstaViva && u.ControladaPorIA);
+            bool quedanEnemigo =
                 JugadorEnemigo.Unidades.Any(u => u.EstaViva && u.ControladaPorIA);
-            if (quedaCombatiente) return;
+            if (quedanLocal && quedanEnemigo) return;
 
             BucleActivo = false;
             GestorArchivos.RegistrarAccion(JugadorLocal.Nombre, "Batalla",
-                "Sin combatientes vivos en ningún bando: empate técnico, bucle apagado.");
+                "Un flanco se quedó sin combatientes: pieza decidida, bucle apagado.");
         }
 
         // ESPEJO DE LA RED (el motor refleja la copia del rival)
