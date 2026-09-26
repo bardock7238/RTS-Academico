@@ -34,6 +34,10 @@ namespace Modelo
         // [Concurrencia/Batalla] Objetivo actual que persigue la IA (el rival más
         // cercano). null = sin objetivo todavía.
         public Unidad Objetivo { get; set; }
+        // [Combate] Edificio que la unidad asedia por orden del jugador
+        // (MoverAAtacarEdificio): camina hasta pegar y NO lo suelta hasta
+        // destruirlo o recibir otra orden. null = sin asedio en marcha.
+        public Edificio ObjetivoEdificio { get; set; }
 
         // [Concurrencia/Batalla] Enfriamiento de ataque: ticks que faltan para
         // poder volver a golpear. Evita que todos peguen en cada latido.

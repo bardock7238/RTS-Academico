@@ -113,6 +113,12 @@ namespace Controlador
 
         public bool AtacarEdificio(Unidad atacante, Edificio edificioEnemigo) => Motor.AtacarEdificio(atacante, edificioEnemigo);
 
+        // [Combate] Clic en edificio enemigo: si está a golpe demuele; si no,
+        // la unidad CAMINA hasta su huella (asedio fijado) y demuele sola.
+        // Como MoverAAtacar: los golpes se anuncian por red al pegar.
+        public bool MoverAAtacarEdificio(Unidad atacante, Edificio edificioEnemigo) =>
+            Motor.MoverAAtacarEdificio(atacante, edificioEnemigo);
+
         public void VerificarGanador() => Motor.VerificarGanador();
 
         // MODO BATALLA (concurrencia masiva — Nivel 1)

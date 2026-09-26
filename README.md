@@ -170,6 +170,11 @@ Los yacimientos dentro de un bioma rinden **+50% por ciclo**.
   `SONIDO` del HUD para silenciar.
 - **Grupos de control**: `Ctrl+5..9` guarda la selección, `5..9` la recupera
   (las bajas se podan solas).
+- **Demoler**: clic en un edificio enemigo y la tropa camina sola hasta su
+  huella y demuele sin soltarlo (solo otra orden lo interrumpe); vale clicar
+  cualquier casilla del edificio. El objetivo fijado no se pierde solo.
+- Cada aldea enemiga arranca con su aldeano (la avanzada suma Cuartel + tropas).
+- La barra muestra la **facción** de lo seleccionado y de lo atacado.
 
 ### Panel izquierdo TROPAS
 

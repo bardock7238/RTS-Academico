@@ -155,6 +155,18 @@ namespace Vista
             _gestor.VistaTablero?.MarcarSelecciones(celdas);
         }
 
+        // Facción de una unidad para el rótulo: la tuya (Griegos) o la del
+        // centro enemigo más cercano (Romanos, Persas...). Solo Vista.
+        private string FaccionDe(Unidad u)
+        {
+            if (u == null || _gestor == null || _gestor.Controlador == null) return "?";
+            var foto = _gestor.UltimaFoto;
+            if (foto != null && foto.UnidadesLocal.Contains(u))
+                return _gestor.Controlador.JugadorLocal.Nombre;
+            string f = foto != null ? ArteRecursos.FaccionDeTropa(u, foto.EdificiosEnemigo) : null;
+            return f ?? _gestor.Controlador.JugadorEnemigo.Nombre;
+        }
+
         // Estado de la selección SIEMPRE visible en la barra (se refresca cada
         // frame: Recolectando, Moviendo, Atacando...). Caduca solo el mensaje efímero.
         private void ActualizarEstadoSeleccion()
@@ -180,7 +192,7 @@ namespace Vista
                 }
                 _estadoPrevioDe = u;
                 _estadoPrevio = u.Estado;
-                _gestor.EstadoSeleccion = $"Seleccionado: {u.Tipo} ({u.Estado})";
+                _gestor.EstadoSeleccion = $"Seleccionado: {u.Tipo} ({u.Estado}) · {FaccionDe(u)}";
             }
             else if (_edificioSeleccionado != null)
             {
@@ -391,7 +403,7 @@ namespace Vista
                     else if (_seleccionadas.Count > 1)
                         _gestor.MostrarMensaje($"{_seleccionadas.Count} unidades seleccionadas");
                     else
-                        _gestor.MostrarMensaje($"Seleccionado: {_seleccionadas[0].Tipo} ({_seleccionadas[0].Estado})");
+                        _gestor.MostrarMensaje($"Seleccionado: {_seleccionadas[0].Tipo} ({_seleccionadas[0].Estado}) · {FaccionDe(_seleccionadas[0])}");
                     return;
                 }
 
@@ -491,7 +503,10 @@ namespace Vista
                             if (_gestor.Controlador.MoverAAtacar(u, e)) nOk++;
                         if (nOk > 0)
                         {
-                            _gestor.MostrarMensaje($"Yendo a atacar {e.Tipo} ({nOk} unidades)...");
+                            string fe = foto != null
+                                ? ArteRecursos.FaccionDeTropa(e, foto.EdificiosEnemigo) : null;
+                            _gestor.MostrarMensaje($"Yendo a atacar {e.Tipo}" +
+                                (fe != null ? $" ({fe})" : "") + $" ({nOk} unidades)...");
                             _gestor.VistaTablero?.MarcarSeleccion(e.PosicionX, e.PosicionY);
                         }
                         else if (_seleccionadas.Count > 0)
@@ -527,21 +542,24 @@ namespace Vista
                 }
                 foreach (Edificio e in foto.EdificiosEnemigo)
                 {
-                    if (e.PosicionX == x && e.PosicionY == y && e.EstaViva)
+                    // Ocupa(): vale clicar CUALQUIER casilla de la huella (el
+                    // Centro es 3x3, no solo su ancla).
+                    if (e.Ocupa(x, y) && e.EstaViva)
                     {
                         int nOk = 0;
                         foreach (Unidad u in _seleccionadas)
-                            if (_gestor.Controlador.AtacarEdificio(u, e)) nOk++;
-                        if (nOk > 0) _gestor.MostrarMensaje($"Atacando {e.Tipo} ({nOk} unidades)");
+                            if (_gestor.Controlador.MoverAAtacarEdificio(u, e)) nOk++;
+                        if (nOk > 0)
+                        {
+                            _gestor.MostrarMensaje($"Demoliendo {e.Tipo} ({nOk} unidades)...");
+                            _gestor.VistaTablero?.MarcarSeleccion(e.PosicionX, e.PosicionY);
+                        }
                         else if (_seleccionadas.Count > 0)
                         {
                             Unidad pri = _seleccionadas[0];
-                            int d = Mathf.Abs(pri.PosicionX - e.PosicionX)
-                                   + Mathf.Abs(pri.PosicionY - e.PosicionY);
                             string m = !pri.PuedeAtacar ? "los aldeanos no atacan"
                                 : !e.EstaViva ? "edificio ya destruido"
-                                : d > pri.RangoAtaque ? $"fuera de rango (distancia {d}, rango {pri.RangoAtaque})"
-                                : "no se pudo atacar";
+                                : "sin hueco junto al edificio";
                             _gestor.AccionRechazada($"atacar {e.Tipo}: {m}");
                         }
                         else _gestor.MostrarMensaje("Selecciona tropas para atacar");
@@ -792,7 +810,7 @@ namespace Vista
                     {
                         _edificioSeleccionado = null;
                         _gestor.VistaTablero?.MarcarSeleccion(_seleccionada.PosicionX, _seleccionada.PosicionY);
-                        _gestor.MostrarMensaje($"Seleccionado: {_seleccionada.Tipo} ({_seleccionada.Estado})");
+                        _gestor.MostrarMensaje($"Seleccionado: {_seleccionada.Tipo} ({_seleccionada.Estado}) · {FaccionDe(_seleccionada)}");
                     }
                 }
                 if (_seleccionada == null)
@@ -984,7 +1002,7 @@ namespace Vista
             RefrescarMarcas();
             _gestor.MostrarMensaje(_seleccionadas.Count == 0 ? "Sin selección"
                 : _seleccionadas.Count == 1
-                    ? $"Seleccionado: {_seleccionadas[0].Tipo} ({_seleccionadas[0].Estado})"
+                    ? $"Seleccionado: {_seleccionadas[0].Tipo} ({_seleccionadas[0].Estado}) · {FaccionDe(_seleccionadas[0])}"
                     : $"{_seleccionadas.Count} unidades seleccionadas");
         }
 

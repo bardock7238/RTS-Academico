@@ -254,11 +254,12 @@ namespace Modelo
                 JugadorEnemigo.AgregarEdificio(centro);
                 if (CapitalEnemiga == null) CapitalEnemiga = centro; // la primera es la capital
                 FaccionesRivales.Add(faccion);
-                if (colocadas == 0)
-                {
-                    int aldeanoY = localArriba ? py - 3 : py + 3;
-                    JugadorEnemigo.AgregarUnidad(DatosDelJuego.CrearUnidad(TipoUnidad.Aldeano, px - 1, aldeanoY));
-                }
+                // Cada aldea arranca con SU aldeano (hacia adentro del mapa;
+                // la avanzada suma además Cuartel + soldados abajo).
+                int aldeanoY = localArriba ? py - 3 : py + 3;
+                if (aldeanoY < 0) aldeanoY = 0;
+                if (aldeanoY >= Mapa.Alto) aldeanoY = Mapa.Alto - 1;
+                JugadorEnemigo.AgregarUnidad(DatosDelJuego.CrearUnidad(TipoUnidad.Aldeano, px - 1, aldeanoY));
                 if (enemigoAvanzado) EquiparBaseAvanzada(JugadorEnemigo, true, px, py);
                 colocadas++;
             }
@@ -553,6 +554,7 @@ namespace Modelo
                 CortarRecoleccionYAnunciar(unidad, dueno);
                 unidad.LimpiarDestino();
                 unidad.Objetivo = null;
+                unidad.ObjetivoEdificio = null;
                 unidad.FijarDestino(nuevoX, nuevoY);
                 unidad.Estado = EstadoUnidad.Moviendo;
 
@@ -584,6 +586,7 @@ namespace Modelo
                     return false;
                 unidad.LimpiarDestino();
                 unidad.Objetivo = null;
+                unidad.ObjetivoEdificio = null;
                 if (unidad.Estado == EstadoUnidad.Moviendo) unidad.Estado = EstadoUnidad.Idle;
                 GestorArchivos.RegistrarAccion(JugadorLocal.Nombre, "Mover",
                     $"Viaje de {unidad.Tipo} cancelado en ({unidad.PosicionX},{unidad.PosicionY}).");
@@ -620,6 +623,7 @@ namespace Modelo
                     CortarRecoleccionYAnunciar(aldeano, dueno);
                     aldeano.LimpiarDestino();
                     aldeano.Objetivo = null;
+                    aldeano.ObjetivoEdificio = null;
                     return IniciarRecoleccionPara(aldeano, recurso, dueno);
                 }
 
@@ -642,6 +646,7 @@ namespace Modelo
                 CortarRecoleccionYAnunciar(aldeano, dueno);
                 aldeano.LimpiarDestino();
                 aldeano.Objetivo = null;
+                    aldeano.ObjetivoEdificio = null;
                 aldeano.FijarDestino(casilla.Value.X, casilla.Value.Y);
                 aldeano.RecursoAlLlegar = recurso;
                 aldeano.Estado = EstadoUnidad.Moviendo;
@@ -1069,6 +1074,7 @@ namespace Modelo
                     atacante.TiempoEsperaAtaque > 0)
                 {
                     atacante.Objetivo = enemigo;
+                    atacante.ObjetivoEdificio = null; // un objetivo cada vez
                     CortarRecoleccionYAnunciar(atacante, JugadorLocal);
                     atacante.LimpiarDestino();
                     atacante.FijarDestino(enemigo.PosicionX, enemigo.PosicionY);
@@ -1082,6 +1088,90 @@ namespace Modelo
                 // En rango y listo: pega de inmediato (Atacar pone el enfriamiento).
                 return Atacar(atacante, enemigo);
             }
+        }
+
+        // [Combate] El jugador ordena demoler (clic en edificio enemigo). Si ya
+        // está a golpe, pega YA; si no, fija el edificio como objetivo y camina
+        // hasta una casilla libre junto a su huella, pegando solo al llegar.
+        // El asedio NO se suelta: solo otra orden o la demolición lo cortan.
+        public bool MoverAAtacarEdificio(Unidad atacante, Edificio objetivo)
+        {
+            lock (Candado)
+            {
+                if (_detenido || !EstadoPartida.EnEjecucion) return false;
+                if (atacante == null || objetivo == null) return false;
+                if (!JugadorLocal.Unidades.Contains(atacante)) return false;
+                if (!JugadorEnemigo.Edificios.Contains(objetivo)) return false;
+                if (!atacante.PuedeAtacar || !objetivo.EstaViva) return false;
+
+                // A golpe y listo: demuele de inmediato.
+                if (DistanciaAEdificio(atacante, objetivo) <= atacante.RangoAtaque &&
+                    atacante.TiempoEsperaAtaque <= 0)
+                    return AtacarEdificio(atacante, objetivo);
+
+                // Si no: caminar hasta el hueco libre junto a la huella más
+                // cercano (el ancla del edificio NO es transitable).
+                (int X, int Y)? hueco = CasillaJuntoAEdificio(objetivo, atacante);
+                if (!hueco.HasValue) return false;
+                atacante.Objetivo = null; // un objetivo cada vez
+                atacante.ObjetivoEdificio = objetivo;
+                CortarRecoleccionYAnunciar(atacante, JugadorLocal);
+                atacante.LimpiarDestino();
+                atacante.FijarDestino(hueco.Value.X, hueco.Value.Y);
+                atacante.Estado = EstadoUnidad.Moviendo;
+                GestorArchivos.RegistrarAccion(
+                    JugadorLocal.Nombre, "Ataque",
+                    $"{atacante.Tipo} marcha a demoler {objetivo.Tipo} ({objetivo.PosicionX},{objetivo.PosicionY}).");
+                return true;
+            }
+        }
+
+        // Hueco transitable junto a la huella del edificio, el más cercano a
+        // la unidad, DESDE EL QUE SE PUEDA PEGAR (las esquinas diagonales
+        // quedan a distancia 2: un cuerpo a cuerpo esperaría allí para
+        // siempre). null = sin hueco útil (rodeado por edificios).
+        private (int X, int Y)? CasillaJuntoAEdificio(Edificio e, Unidad u)
+        {
+            (int X, int Y)? mejor = null;
+            int mejorD = int.MaxValue;
+            for (int dx = -1; dx <= e.Lado; dx++)
+                for (int dy = -1; dy <= e.Lado; dy++)
+                {
+                    bool borde = dx == -1 || dx == e.Lado || dy == -1 || dy == e.Lado;
+                    if (!borde) continue;
+                    int x = e.PosicionX + dx, y = e.PosicionY + dy;
+                    if (!Tablero.EsCoordenadaValida(x, y)) continue;
+                    if (!Tablero.EsTransitable(x, y, JugadorLocal, JugadorEnemigo)) continue;
+                    if (DistanciaCeldaAHuella(x, y, e) > u.RangoAtaque) continue;
+                    int d = Math.Abs(x - u.PosicionX) + Math.Abs(y - u.PosicionY);
+                    if (d < mejorD) { mejorD = d; mejor = (x, y); }
+                }
+            return mejor;
+        }
+
+        // Manhattan de una casilla a la huella (0 si la pisa).
+        private static int DistanciaCeldaAHuella(int x, int y, Edificio e)
+        {
+            int dx = x < e.PosicionX ? e.PosicionX - x
+                : x >= e.PosicionX + e.Lado ? x - (e.PosicionX + e.Lado - 1) : 0;
+            int dy = y < e.PosicionY ? e.PosicionY - y
+                : y >= e.PosicionY + e.Lado ? y - (e.PosicionY + e.Lado - 1) : 0;
+            return dx + dy;
+        }
+
+        // [Combate] Tras cada paso (o quietos), si hay EDIFICIO objetivo vivo
+        // y estamos a golpe con el enfriamiento listo → demuele. Solo el
+        // jugador local (la IA asedia por su propio camino).
+        private void ProcesarObjetivoEdificioDe(Unidad u, Jugador dueno)
+        {
+            Edificio obj = u.ObjetivoEdificio;
+            if (obj == null) return;
+            if (!obj.EstaViva) { u.ObjetivoEdificio = null; return; }
+            if (!u.PuedeAtacar) { u.ObjetivoEdificio = null; return; }
+            if (u.TiempoEsperaAtaque > 0) return;
+            if (DistanciaAEdificio(u, obj) > u.RangoAtaque) return;
+            if (dueno == JugadorLocal)
+                AtacarEdificio(u, obj); // pone enfriamiento y limpia el viaje
         }
 
         // [Combate] Tras cada paso (o quietos), si hay objetivo vivo y estamos en
@@ -1216,6 +1306,9 @@ namespace Modelo
 
                 if (!edificioEnemigo.EstaViva)
                 {
+                    // Demolido: se suelta el asedio para no pegarle al solar.
+                    if (atacante.ObjetivoEdificio == edificioEnemigo)
+                        atacante.ObjetivoEdificio = null;
                     JugadorEnemigo.EliminarEdificio(edificioEnemigo);
                     GestorArchivos.RegistrarAccion(JugadorLocal.Nombre, "Ataque",
                         $"{edificioEnemigo.Tipo} enemigo destruido.");
@@ -1400,6 +1493,7 @@ namespace Modelo
                 CortarRecoleccionYAnunciar(unidad, JugadorLocal);
                 unidad.LimpiarDestino();
                 unidad.Objetivo = null;
+                unidad.ObjetivoEdificio = null;
                 unidad.FijarDestino(casilla.Value.X, casilla.Value.Y);
                 unidad.ItemAlLlegar = item;
                 unidad.Estado = EstadoUnidad.Moviendo;
@@ -1615,6 +1709,8 @@ namespace Modelo
                 // no tenga destino de viaje). Enfriamiento incluido.
                 if (u.Objetivo != null)
                     ProcesarObjetivoDe(u, dueno);
+                if (u.ObjetivoEdificio != null)
+                    ProcesarObjetivoEdificioDe(u, dueno);
 
                 // [Persecución] Con objetivo vivo fuera de rango, el destino es
                 // SIEMPRE su casilla actual: el ciervo vaga y la casilla vieja
@@ -1630,6 +1726,27 @@ namespace Modelo
                 {
                     u.FijarDestino(u.Objetivo.PosicionX, u.Objetivo.PosicionY);
                     u.Estado = EstadoUnidad.Moviendo;
+                }
+
+                // [Asedio del jugador] Con edificio objetivo fuera de golpe, el
+                // destino es SIEMPRE un hueco junto a su huella (el edificio no
+                // se mueve, pero el hueco elegido puede taparse). Sin otra
+                // tarea pendiente y sin camino: se suelta el asedio.
+                if (u.ObjetivoEdificio != null && u.ObjetivoEdificio.EstaViva && !u.ControladaPorIA
+                    && u.PuedeAtacar && u.ItemAlLlegar == null && u.RecursoAlLlegar == null
+                    && DistanciaAEdificio(u, u.ObjetivoEdificio) > u.RangoAtaque)
+                {
+                    (int X, int Y)? hueco = CasillaJuntoAEdificio(u.ObjetivoEdificio, u);
+                    if (!hueco.HasValue)
+                    {
+                        u.ObjetivoEdificio = null;
+                        if (u.Estado == EstadoUnidad.Moviendo) u.Estado = EstadoUnidad.Idle;
+                    }
+                    else if (u.DestinoX != hueco.Value.X || u.DestinoY != hueco.Value.Y)
+                    {
+                        u.FijarDestino(hueco.Value.X, hueco.Value.Y);
+                        u.Estado = EstadoUnidad.Moviendo;
+                    }
                 }
 
                 if (!u.TieneDestino) continue;
@@ -1652,8 +1769,11 @@ namespace Modelo
                     u.Estado = EstadoUnidad.Moviendo;
                     if (u.PosicionX == u.DestinoX && u.PosicionY == u.DestinoY)
                         LlegarADestino(u, dueno);
-                    else if (u.Objetivo != null)
+                    else if (u.Objetivo != null || u.ObjetivoEdificio != null)
+                    {
                         ProcesarObjetivoDe(u, dueno); // acercó un paso: ¿ya en rango?
+                        ProcesarObjetivoEdificioDe(u, dueno);
+                    }
                 }
                 else
                 {
@@ -1750,6 +1870,9 @@ namespace Modelo
             {
                 ProcesarObjetivoDe(u, dueno);
             }
+            // [Asedio] Llegó junto a la huella: demuele de inmediato si puede.
+            if (u.ObjetivoEdificio != null)
+                ProcesarObjetivoEdificioDe(u, dueno);
 
             if (item != null)
             {
@@ -1882,14 +2005,8 @@ namespace Modelo
             Math.Abs(a.PosicionX - b.PosicionX) + Math.Abs(a.PosicionY - b.PosicionY);
 
         // Manhattan a la casilla más cercana de la huella (0 si la pisa).
-        private static int DistanciaAEdificio(Unidad u, Edificio e)
-        {
-            int dx = u.PosicionX < e.PosicionX ? e.PosicionX - u.PosicionX
-                : u.PosicionX >= e.PosicionX + e.Lado ? u.PosicionX - (e.PosicionX + e.Lado - 1) : 0;
-            int dy = u.PosicionY < e.PosicionY ? e.PosicionY - u.PosicionY
-                : u.PosicionY >= e.PosicionY + e.Lado ? u.PosicionY - (e.PosicionY + e.Lado - 1) : 0;
-            return dx + dy;
-        }
+        private static int DistanciaAEdificio(Unidad u, Edificio e) =>
+            DistanciaCeldaAHuella(u.PosicionX, u.PosicionY, e);
 
         private int CalcularDano(Unidad atacante, Unidad defensor, Jugador duenoAtacante, Jugador duenoDefensor)
         {
@@ -2067,6 +2184,7 @@ namespace Modelo
 
                 unidad.LimpiarDestino();
                 unidad.Objetivo = null;
+                unidad.ObjetivoEdificio = null;
                 if (unidad.PosicionX == nuevoX && unidad.PosicionY == nuevoY) return unidad;
                 unidad.FijarDestino(nuevoX, nuevoY);
                 unidad.Estado = EstadoUnidad.Moviendo;
