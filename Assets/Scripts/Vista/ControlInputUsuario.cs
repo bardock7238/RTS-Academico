@@ -16,18 +16,45 @@ namespace Vista
         private readonly List<Unidad> _seleccionadas = new List<Unidad>();
         private Unidad _seleccionada => _seleccionadas.Count > 0 ? _seleccionadas[0] : null;
         private Edificio _edificioSeleccionado;
+        // Grupos de control (teclas 5-9): Ctrl+N guarda la selección, N la
+        // recupera. Solo Vista (las unidades muertas se podan al llamar).
+        private readonly Dictionary<int, List<Unidad>> _grupos = new Dictionary<int, List<Unidad>>();
 
         private TipoEdificio? _modoConstruccion;
         private bool _modoRecoger; // C: próximo clic = yacimiento o item; la unidad va sola
+
+        // Caché del fantasma para no revalidar cada frame.
+        private bool _fantasmaVale;
+        private TipoEdificio _fantasmaTipo;
+        private int _fantasmaX, _fantasmaY;
+        private float _fantasmaTiempo;
 
         // Último estado visto en la selección (para detectar "dejó de caminar").
         private Unidad _estadoPrevioDe;
         private EstadoUnidad _estadoPrevio;
 
+        // Cámara RTS (solo vista): rueda, flechas y arrastre con botón central.
+        // Se cachea (Camera.main busca por tag cada vez).
+        private Camera _cam;
+        private bool _arrastraCamara;
+        private Vector3 _arrastreRaton;
+        private Vector3 _arrastreCamaraPos;
+        private Camera Cam() => _cam != null ? _cam : (_cam = Camera.main);
+
+        // Selección por arrastre: caja con botón izquierdo en modo normal.
+        private bool _cajaActiva;
+        private bool _arrastrandoCaja;
+        private (int x, int y) _cajaDesdeCelda;
+        private (int x, int y) _cajaHastaCelda;
+        private Vector2 _cajaDesdePantalla;
+        private GameObject _cajaGo;
+        private SpriteRenderer _cajaSr;
+
         public void Inicializar(GestorJuego gestor)
         {
             _gestor = gestor;
             ConstruirBotonesSiFaltan();
+            CrearMarcoCaja();
         }
 
         private void SeleccionarSolo(Unidad u)
@@ -35,6 +62,24 @@ namespace Vista
             _seleccionadas.Clear();
             if (u != null) _seleccionadas.Add(u);
             RefrescarMarcas();
+        }
+
+        // Alt+QWER: reemplaza la selección por todas las vivas de ese tipo.
+        private void SeleccionarPorTipo(TipoUnidad tipo)
+        {
+            var foto = _gestor.UltimaFoto;
+            _seleccionadas.Clear();
+            if (foto != null)
+                foreach (Unidad u in foto.UnidadesLocal)
+                    if (u.EstaViva && u.Tipo == tipo) _seleccionadas.Add(u);
+            _edificioSeleccionado = null;
+            _modoConstruccion = null;
+            _modoRecoger = false;
+            RefrescarMarcas();
+            if (_seleccionadas.Count == 0)
+                _gestor.MostrarMensaje($"Sin {tipo}s vivos");
+            else
+                _gestor.MostrarMensaje($"{_seleccionadas.Count} {tipo} seleccionados");
         }
 
         private void AgregarSeleccion(Unidad u)
@@ -49,6 +94,52 @@ namespace Vista
         {
             _seleccionadas.Clear();
             RefrescarMarcas();
+        }
+
+        // Ctrl+5-9: guarda la selección viva en el grupo N (sobrescribe).
+        private void GuardarGrupo(int n)
+        {
+            var vivas = new List<Unidad>();
+            foreach (Unidad u in _seleccionadas)
+                if (u != null && u.EstaViva) vivas.Add(u);
+            if (vivas.Count == 0)
+            {
+                _gestor.AccionRechazada($"grupo {n}: sin selección viva");
+                return;
+            }
+            _grupos[n] = vivas;
+            _gestor.MostrarMensaje($"Grupo {n} guardado ({vivas.Count})");
+        }
+
+        // 5-9: recupera el grupo N (solo vivas del mundo actual; las muertas
+        // o de una partida anterior se podan y no seleccionan fantasmas).
+        private void LlamarGrupo(int n)
+        {
+            if (!_grupos.TryGetValue(n, out List<Unidad> grupo))
+            {
+                _gestor.AccionRechazada($"grupo {n} vacío");
+                return;
+            }
+            var foto = _gestor.UltimaFoto;
+            var vivas = new List<Unidad>();
+            foreach (Unidad u in grupo)
+                if (u != null && u.EstaViva && foto != null && foto.UnidadesLocal.Contains(u))
+                    vivas.Add(u);
+            _grupos[n] = vivas;
+            if (vivas.Count == 0)
+            {
+                _gestor.AccionRechazada($"grupo {n} vacío");
+                return;
+            }
+            _seleccionadas.Clear();
+            _seleccionadas.AddRange(vivas);
+            _edificioSeleccionado = null;
+            _modoConstruccion = null;
+            _modoRecoger = false;
+            RefrescarMarcas();
+            _gestor.MostrarMensaje(vivas.Count > 1
+                ? $"Grupo {n} ({vivas.Count} unidades)"
+                : $"Grupo {n}: {vivas[0].Tipo} ({vivas[0].Estado})");
         }
 
         private void RefrescarMarcas()
@@ -107,16 +198,103 @@ namespace Vista
         {
             if (_gestor == null || _gestor.Controlador == null) return;
             ActualizarEstadoSeleccion();
+
+            // Menú inicial abierto: la partida aún no empezó, sin input.
+            if (_gestor.MenuInicio != null && _gestor.MenuInicio.Abierto)
+            {
+                _gestor.VistaTablero?.OcultarFantasma();
+                return;
+            }
+
+            // Fantasma de construcción: sigue al ratón con la huella delineada
+            // (verde = se puede, rojo = no). Solo se revalida al cambiar de
+            // celda (o cada 0.5 s, por si cambian recursos/unidades). Sobre
+            // la UI se oculta.
+            if (_modoConstruccion.HasValue && !SobreUi() && TryGetHover(out int hx, out int hy))
+            {
+                if (!_fantasmaVale || _fantasmaTipo != _modoConstruccion.Value
+                    || _fantasmaX != hx || _fantasmaY != hy
+                    || Time.unscaledTime - _fantasmaTiempo > 0.5f)
+                {
+                    _fantasmaVale = true;
+                    _fantasmaTipo = _modoConstruccion.Value;
+                    _fantasmaX = hx;
+                    _fantasmaY = hy;
+                    _fantasmaTiempo = Time.unscaledTime;
+                    _gestor.VistaTablero?.MostrarFantasma(_modoConstruccion.Value, hx, hy,
+                        AreaConstruible(_modoConstruccion.Value, hx, hy));
+                }
+            }
+            else
+            {
+                _fantasmaVale = false;
+                _gestor.VistaTablero?.OcultarFantasma();
+            }
+
+            // Cámara antes del filtro UI: la rueda funciona también sobre paneles.
+            CamaraRts();
+
             if (SobreUi()) return;
 
-            if (Input.GetMouseButtonDown(0) || Input.GetMouseButtonDown(1))
+            // Clic clásico o caja de selección (solo en modo normal: en modo
+            // construcción/recoger el clic va directo a su acción).
+            if (!_modoConstruccion.HasValue && !_modoRecoger
+                && Input.GetMouseButtonDown(0) && TryGetHover(out int bx, out int by))
+            {
+                _cajaDesdeCelda = (bx, by);
+                _cajaHastaCelda = (bx, by);
+                _cajaDesdePantalla = Input.mousePosition;
+                _cajaActiva = true;
+                _arrastrandoCaja = false;
+            }
+            if (_cajaActiva)
+            {
+                if (Input.GetMouseButtonUp(0))
+                {
+                    _cajaActiva = false;
+                    OcultarCaja();
+                    if (_arrastrandoCaja) { _arrastrandoCaja = false; SeleccionarEnCaja(); }
+                    else ManejarClicIzquierdo();
+                }
+                else if (Input.GetMouseButton(0))
+                {
+                    if (!_arrastrandoCaja
+                        && ((Vector2)Input.mousePosition - _cajaDesdePantalla).magnitude > 10f)
+                        _arrastrandoCaja = true;
+                    if (_arrastrandoCaja && TryGetHover(out int hx2, out int hy2))
+                    {
+                        _cajaHastaCelda = (hx2, hy2);
+                        PintarCaja();
+                    }
+                }
+                else { _cajaActiva = false; OcultarCaja(); }
+            }
+            else if (Input.GetMouseButtonDown(0) || Input.GetMouseButtonDown(1))
                 ManejarClicIzquierdo();
 
             // Atajos de teclado (la guía de la Vista usa QWER + 1-4).
-            if (Input.GetKeyDown(KeyCode.Q)) Entrenar(TipoUnidad.Aldeano, TipoEdificio.CentroUrbano);
-            if (Input.GetKeyDown(KeyCode.W)) Entrenar(TipoUnidad.Soldado, TipoEdificio.Cuartel);
-            if (Input.GetKeyDown(KeyCode.E)) Entrenar(TipoUnidad.Arquero, TipoEdificio.Cuartel);
-            if (Input.GetKeyDown(KeyCode.R)) Entrenar(TipoUnidad.Caballero, TipoEdificio.Cuartel);
+            // Alt+QWER = seleccionar TODAS las unidades de ese tipo.
+            bool alt = Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt);
+            if (Input.GetKeyDown(KeyCode.Q))
+            {
+                if (alt) SeleccionarPorTipo(TipoUnidad.Aldeano);
+                else Entrenar(TipoUnidad.Aldeano, TipoEdificio.CentroUrbano);
+            }
+            if (Input.GetKeyDown(KeyCode.W))
+            {
+                if (alt) SeleccionarPorTipo(TipoUnidad.Soldado);
+                else Entrenar(TipoUnidad.Soldado, TipoEdificio.Cuartel);
+            }
+            if (Input.GetKeyDown(KeyCode.E))
+            {
+                if (alt) SeleccionarPorTipo(TipoUnidad.Arquero);
+                else Entrenar(TipoUnidad.Arquero, TipoEdificio.Cuartel);
+            }
+            if (Input.GetKeyDown(KeyCode.R))
+            {
+                if (alt) SeleccionarPorTipo(TipoUnidad.Caballero);
+                else Entrenar(TipoUnidad.Caballero, TipoEdificio.Cuartel);
+            }
 
             if (Input.GetKeyDown(KeyCode.Alpha1)) IniciarConstruccion(TipoEdificio.Casa);
             if (Input.GetKeyDown(KeyCode.Alpha2)) IniciarConstruccion(TipoEdificio.Cuartel);
@@ -125,8 +303,42 @@ namespace Vista
 
             if (Input.GetKeyDown(KeyCode.C)) IniciarModoRecoger();
             if (Input.GetKeyDown(KeyCode.I)) RecogerItemCercano();
+
+            // T: mercado, Y: herrería, M: vista completa, S: sonido sí/no.
+            if (Input.GetKeyDown(KeyCode.T)) _gestor.MenuMercado?.Alternar();
+            if (Input.GetKeyDown(KeyCode.Y)) _gestor.MenuMejoras?.Alternar();
+            if (Input.GetKeyDown(KeyCode.M)) AlternarVistaCompleta();
+            if (Input.GetKeyDown(KeyCode.S))
+            {
+                SonidoJuego.AlternarMudez();
+                _gestor.MostrarMensaje("Sonido: " + (SonidoJuego.Silenciado ? "NO" : "SÍ"), 2.5f, false);
+            }
+
+            // 5-9: llamar grupo de control; Ctrl+5-9: guardar la selección.
+            bool ctrl = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
+            for (int n = 5; n <= 9; n++)
+            {
+                if (!Input.GetKeyDown((KeyCode)((int)KeyCode.Alpha5 + (n - 5)))) continue;
+                if (ctrl) GuardarGrupo(n);
+                else LlamarGrupo(n);
+                break;
+            }
+
             if (Input.GetKeyDown(KeyCode.Escape))
             {
+                // Con el menú inicial abierto hay que elegir modo: Esc no hace nada.
+                if (_gestor.MenuInicio != null && _gestor.MenuInicio.Abierto) return;
+                // Con mercado/herrería abiertos, Esc los cierra y listo.
+                if (_gestor.MenuMercado != null && _gestor.MenuMercado.Abierto)
+                {
+                    _gestor.MenuMercado.Cerrar();
+                    return;
+                }
+                if (_gestor.MenuMejoras != null && _gestor.MenuMejoras.Abierto)
+                {
+                    _gestor.MenuMejoras.Cerrar();
+                    return;
+                }
                 // Escape SIEMPRE deselecciona; si había viajes, también los corta.
                 bool canceloViaje = false;
                 foreach (Unidad u in _seleccionadas)
@@ -200,7 +412,7 @@ namespace Vista
                 Edificio edificio = null;
                 foreach (Edificio e in foto.EdificiosLocal)
                 {
-                    if (e.PosicionX == x && e.PosicionY == y) { edificio = e; break; }
+                    if (e.Ocupa(x, y)) { edificio = e; break; }
                 }
                 if (edificio != null)
                 {
@@ -282,11 +494,34 @@ namespace Vista
                             _gestor.MostrarMensaje($"Yendo a atacar {e.Tipo} ({nOk} unidades)...");
                             _gestor.VistaTablero?.MarcarSeleccion(e.PosicionX, e.PosicionY);
                         }
-                        else
+                        else if (_seleccionadas.Count > 0)
                         {
                             Unidad pri = _seleccionadas[0];
                             _gestor.AccionRechazada($"atacar {e.Tipo}: {MotivoAtacar(pri, e)}");
                         }
+                        else _gestor.MostrarMensaje("Selecciona tropas para atacar");
+                        return;
+                    }
+                }
+                // Ciervo → cazar con militares (+100 comida al matarlo).
+                foreach (Unidad c in foto.Animales)
+                {
+                    if (c.PosicionX == x && c.PosicionY == y && c.EstaViva)
+                    {
+                        int nOk = 0;
+                        foreach (Unidad u in _seleccionadas)
+                            if (_gestor.Controlador.MoverAAtacar(u, c)) nOk++;
+                        if (nOk > 0)
+                        {
+                            _gestor.MostrarMensaje($"Cazando ciervo ({nOk} unidades)...");
+                            _gestor.VistaTablero?.MarcarSeleccion(c.PosicionX, c.PosicionY);
+                        }
+                        else if (_seleccionadas.Count > 0)
+                        {
+                            Unidad pri = _seleccionadas[0];
+                            _gestor.AccionRechazada($"cazar ciervo: {MotivoAtacar(pri, c)}");
+                        }
+                        else _gestor.MostrarMensaje("Selecciona tropas para cazar");
                         return;
                     }
                 }
@@ -298,17 +533,18 @@ namespace Vista
                         foreach (Unidad u in _seleccionadas)
                             if (_gestor.Controlador.AtacarEdificio(u, e)) nOk++;
                         if (nOk > 0) _gestor.MostrarMensaje($"Atacando {e.Tipo} ({nOk} unidades)");
-                        else
+                        else if (_seleccionadas.Count > 0)
                         {
                             Unidad pri = _seleccionadas[0];
                             int d = Mathf.Abs(pri.PosicionX - e.PosicionX)
-                                  + Mathf.Abs(pri.PosicionY - e.PosicionY);
+                                   + Mathf.Abs(pri.PosicionY - e.PosicionY);
                             string m = !pri.PuedeAtacar ? "los aldeanos no atacan"
                                 : !e.EstaViva ? "edificio ya destruido"
                                 : d > pri.RangoAtaque ? $"fuera de rango (distancia {d}, rango {pri.RangoAtaque})"
                                 : "no se pudo atacar";
                             _gestor.AccionRechazada($"atacar {e.Tipo}: {m}");
                         }
+                        else _gestor.MostrarMensaje("Selecciona tropas para atacar");
                         return;
                     }
                 }
@@ -485,11 +721,12 @@ namespace Vista
             if (foto == null) return;
 
             int ox, oy;
+            Camera camItem = Cam();
             if (_seleccionada != null) { ox = _seleccionada.PosicionX; oy = _seleccionada.PosicionY; }
-            else if (Camera.main != null)
+            else if (camItem != null)
             {
-                ox = Mathf.RoundToInt(Camera.main.transform.position.x);
-                oy = Mathf.RoundToInt(Camera.main.transform.position.y);
+                ox = Mathf.RoundToInt(camItem.transform.position.x);
+                oy = Mathf.RoundToInt(camItem.transform.position.y);
             }
             else { _gestor.MostrarMensaje("Sin cámara ni selección"); return; }
 
@@ -520,10 +757,11 @@ namespace Vista
             if (_seleccionada != null && _seleccionada.EstaViva) return;
             var foto = _gestor.UltimaFoto;
             if (foto == null) return;
-            int cx = Camera.main != null
-                ? Mathf.RoundToInt(Camera.main.transform.position.x) : Mapa.Ancho / 2;
-            int cy = Camera.main != null
-                ? Mathf.RoundToInt(Camera.main.transform.position.y) : Mapa.Alto / 2;
+            Camera camCerca = Cam();
+            int cx = camCerca != null
+                ? Mathf.RoundToInt(camCerca.transform.position.x) : Mapa.Ancho / 2;
+            int cy = camCerca != null
+                ? Mathf.RoundToInt(camCerca.transform.position.y) : Mapa.Alto / 2;
             SeleccionarSolo(UnidadMasCercanaA(foto, cx, cy));
             _edificioSeleccionado = null;
             if (_seleccionada != null)
@@ -541,11 +779,12 @@ namespace Vista
                 var foto = _gestor.UltimaFoto;
                 if (foto != null)
                 {
+                    Camera camModo = Cam();
                     int cx = Mapa.Ancho / 2, cy = Mapa.Alto / 2;
-                    if (Camera.main != null)
+                    if (camModo != null)
                     {
-                        cx = Mathf.RoundToInt(Camera.main.transform.position.x);
-                        cy = Mathf.RoundToInt(Camera.main.transform.position.y);
+                        cx = Mathf.RoundToInt(camModo.transform.position.x);
+                        cy = Mathf.RoundToInt(camModo.transform.position.y);
                     }
                     // Preferir aldeano (para recolectar); si no, cualquier unidad.
                     SeleccionarSolo(AldeanoMasCercanoA(foto, cx, cy) ?? UnidadMasCercanaA(foto, cx, cy));
@@ -572,7 +811,7 @@ namespace Vista
 
             _modoConstruccion = null;
             _modoRecoger = true;
-            _gestor.MostrarMensaje("Clic en un yacimiento o item: irá solo a recogerlo (C otra vez = más cercano)");
+            _gestor.MostrarMensaje("Clic en un yacimiento o item: irá solo (C otra vez = cercano, Esc cancela)");
         }
 
         private Item BuscarItemEn(int x, int y)
@@ -639,18 +878,169 @@ namespace Vista
             return mejor;
         }
 
+        // Cámara RTS: rueda = zoom (6..55), flechas = paneo, botón central =
+        // arrastrar. No toca el Modelo: solo mueve la cámara de la Vista.
+        private void CamaraRts()
+        {
+            Camera cam = Cam();
+            if (cam == null || !cam.orthographic) return;
+
+            float rueda = Input.GetAxis("Mouse ScrollWheel");
+            if (Mathf.Abs(rueda) > 0.0001f)
+                cam.orthographicSize = Mathf.Clamp(cam.orthographicSize - rueda * 4f, 6f, 55f);
+
+            // Paneo solo fuera de la UI y sin estar escribiendo la IP del menú.
+            if (!SobreUi() && !EstaEscribiendoEnUi())
+            {
+                float vel = cam.orthographicSize * 1.5f;
+                Vector3 d = Vector3.zero;
+                if (Input.GetKey(KeyCode.LeftArrow)) d.x -= 1f;
+                if (Input.GetKey(KeyCode.RightArrow)) d.x += 1f;
+                if (Input.GetKey(KeyCode.UpArrow)) d.y += 1f;
+                if (Input.GetKey(KeyCode.DownArrow)) d.y -= 1f;
+                if (d != Vector3.zero)
+                    MoverCamaraA(cam.transform.position + d.normalized * vel * Time.unscaledDeltaTime);
+
+                if (Input.GetMouseButtonDown(2))
+                {
+                    _arrastraCamara = true;
+                    _arrastreRaton = Input.mousePosition;
+                    _arrastreCamaraPos = cam.transform.position;
+                }
+            }
+            if (Input.GetMouseButtonUp(2)) _arrastraCamara = false;
+            if (_arrastraCamara && Input.GetMouseButton(2))
+            {
+                float mundoPorPixel = (cam.orthographicSize * 2f) / Screen.height;
+                Vector3 delta = Input.mousePosition - _arrastreRaton;
+                Vector3 p = _arrastreCamaraPos - new Vector3(delta.x * mundoPorPixel, delta.y * mundoPorPixel, 0f);
+                p.z = cam.transform.position.z;
+                MoverCamaraA(p);
+            }
+        }
+
+        private void MoverCamaraA(Vector3 p)
+        {
+            Camera cam = Cam();
+            if (cam == null) return;
+            p.x = Mathf.Clamp(p.x, -2f, Mapa.Ancho + 1f);
+            p.y = Mathf.Clamp(p.y, -2f, Mapa.Alto + 1f);
+            cam.transform.position = p;
+        }
+
+        private static bool EstaEscribiendoEnUi()
+        {
+            var actual = EventSystem.current != null ? EventSystem.current.currentSelectedGameObject : null;
+            return actual != null && actual.GetComponent<UnityEngine.UI.InputField>() != null;
+        }
+
+        // Marco visual de la caja de selección (un sprite blanco traslúcido).
+        private void CrearMarcoCaja()
+        {
+            if (_cajaGo != null) return;
+            _cajaGo = new GameObject("MarcoCaja", typeof(SpriteRenderer));
+            _cajaGo.transform.SetParent(transform, false);
+            _cajaSr = _cajaGo.GetComponent<SpriteRenderer>();
+            var tex = new Texture2D(1, 1, TextureFormat.RGBA32, false);
+            tex.SetPixel(0, 0, Color.white);
+            tex.Apply();
+            _cajaSr.sprite = Sprite.Create(tex, new Rect(0, 0, 1, 1), new Vector2(0.5f, 0.5f), 1f);
+            _cajaSr.color = new Color(0.3f, 1f, 0.3f, 0.25f);
+            _cajaSr.sortingOrder = 6;
+            _cajaGo.SetActive(false);
+        }
+
+        private void PintarCaja()
+        {
+            if (_cajaSr == null) return;
+            float tam = _gestor.VistaTablero != null ? _gestor.VistaTablero.TamanoCasilla : 1f;
+            int x0 = Mathf.Min(_cajaDesdeCelda.x, _cajaHastaCelda.x);
+            int x1 = Mathf.Max(_cajaDesdeCelda.x, _cajaHastaCelda.x);
+            int y0 = Mathf.Min(_cajaDesdeCelda.y, _cajaHastaCelda.y);
+            int y1 = Mathf.Max(_cajaDesdeCelda.y, _cajaHastaCelda.y);
+            _cajaSr.transform.position = new Vector3((x0 + x1 + 1) / 2f * tam, (y0 + y1 + 1) / 2f * tam, -0.06f);
+            _cajaSr.transform.localScale = new Vector3((x1 - x0 + 1) * tam, (y1 - y0 + 1) * tam, 1f);
+            _cajaGo.SetActive(true);
+        }
+
+        private void OcultarCaja()
+        {
+            if (_cajaGo != null) _cajaGo.SetActive(false);
+        }
+
+        private void SeleccionarEnCaja()
+        {
+            var foto = _gestor.UltimaFoto;
+            if (foto == null) return;
+            int x0 = Mathf.Min(_cajaDesdeCelda.x, _cajaHastaCelda.x);
+            int x1 = Mathf.Max(_cajaDesdeCelda.x, _cajaHastaCelda.x);
+            int y0 = Mathf.Min(_cajaDesdeCelda.y, _cajaHastaCelda.y);
+            int y1 = Mathf.Max(_cajaDesdeCelda.y, _cajaHastaCelda.y);
+            _seleccionadas.Clear();
+            foreach (Unidad u in foto.UnidadesLocal)
+                if (u.EstaViva && u.PosicionX >= x0 && u.PosicionX <= x1 && u.PosicionY >= y0 && u.PosicionY <= y1)
+                    _seleccionadas.Add(u);
+            _edificioSeleccionado = null;
+            RefrescarMarcas();
+            _gestor.MostrarMensaje(_seleccionadas.Count == 0 ? "Sin selección"
+                : _seleccionadas.Count == 1
+                    ? $"Seleccionado: {_seleccionadas[0].Tipo} ({_seleccionadas[0].Estado})"
+                    : $"{_seleccionadas.Count} unidades seleccionadas");
+        }
+
         private static bool SobreUi()
         {
             if (EventSystem.current == null) return false;
             return EventSystem.current.IsPointerOverGameObject();
         }
 
+        private bool TryGetHover(out int x, out int y)
+        {
+            x = y = 0;
+            Camera cam = Cam();
+            if (cam == null) return false;
+            Vector2 punto = cam.ScreenToWorldPoint(Input.mousePosition);
+            x = Mathf.RoundToInt(punto.x);
+            y = Mathf.RoundToInt(punto.y);
+            return x >= 0 && x < Mapa.Ancho && y >= 0 && y < Mapa.Alto;
+        }
+
+        // ¿Se podría construir aquí? Replica la validación del Modelo leyendo
+        // SOLO la foto (la Vista no toca el Modelo): área libre + costos.
+        private bool AreaConstruible(TipoEdificio tipo, int x, int y)
+        {
+            var foto = _gestor.UltimaFoto;
+            if (foto == null || !foto.EnEjecucion) return false;
+            int lado = DatosDelJuego.LadoSegunTipo(tipo);
+            for (int dx = 0; dx < lado; dx++)
+                for (int dy = 0; dy < lado; dy++)
+                {
+                    int cx = x + dx, cy = y + dy;
+                    if (cx < 0 || cy < 0 || cx >= Mapa.Ancho || cy >= Mapa.Alto) return false;
+                    foreach (Recurso r in foto.Recursos)
+                        if (r.PosicionX == cx && r.PosicionY == cy) return false;
+                    foreach (Unidad u in foto.UnidadesLocal)
+                        if (u.EstaViva && u.PosicionX == cx && u.PosicionY == cy) return false;
+                    foreach (Unidad u in foto.UnidadesEnemigo)
+                        if (u.EstaViva && u.PosicionX == cx && u.PosicionY == cy) return false;
+                    foreach (Edificio e in foto.EdificiosLocal)
+                        if (e.Ocupa(cx, cy)) return false;
+                    foreach (Edificio e in foto.EdificiosEnemigo)
+                        if (e.Ocupa(cx, cy)) return false;
+                }
+            EdificioConfig cfg = DatosDelJuego.EdificiosBase[tipo];
+            return foto.Madera >= cfg.CostoMadera && foto.Oro >= cfg.CostoOro
+                && foto.Comida >= cfg.CostoComida && foto.Hierro >= cfg.CostoHierro
+                && foto.Piedra >= cfg.CostoPiedra;
+        }
+
         private bool TryGetClic(out int x, out int y, out bool clicDerecho)
         {
             x = y = 0;
             clicDerecho = Input.GetMouseButtonDown(1);
-            if (Camera.main == null) return false;
-            Vector2 punto = Camera.main.ScreenToWorldPoint(Input.mousePosition);
+            Camera cam = Cam();
+            if (cam == null) return false;
+            Vector2 punto = cam.ScreenToWorldPoint(Input.mousePosition);
             x = Mathf.RoundToInt(punto.x);
             y = Mathf.RoundToInt(punto.y);
             return x >= 0 && x < Mapa.Ancho && y >= 0 && y < Mapa.Alto;
@@ -659,29 +1049,40 @@ namespace Vista
         private void IniciarConstruccion(TipoEdificio tipo)
         {
             _modoConstruccion = tipo;
-            _gestor.MostrarMensaje($"Clic en el mapa para construir {tipo}");
+            _gestor.MostrarMensaje($"Clic en el mapa para construir {tipo} (Esc cancela)");
         }
 
         // Diagnóstico del rechazo en el MISMO orden que ConstruirEdificioPara:
-        // yacimiento → casilla ocupada → costos. La Vista solo lee la foto.
+        // yacimiento → casilla ocupada → costos. Revisa toda la HUELLA
+        // (Lado x Lado). La Vista solo lee la foto.
         private static string MotivoConstruccionFallida(InstantaneaJuego foto, TipoEdificio tipo, int x, int y)
         {
-            foreach (Recurso r in foto.Recursos)
-                if (r.PosicionX == x && r.PosicionY == y)
-                    return $"hay un yacimiento de {r.Tipo}";
-
-            foreach (Unidad u in foto.UnidadesLocal)
-                if (u.PosicionX == x && u.PosicionY == y)
-                    return "casilla ocupada por una unidad";
-            foreach (Unidad u in foto.UnidadesEnemigo)
-                if (u.PosicionX == x && u.PosicionY == y)
-                    return "casilla ocupada por una unidad";
-            foreach (Edificio e in foto.EdificiosLocal)
-                if (e.PosicionX == x && e.PosicionY == y)
-                    return $"casilla ocupada por {e.Tipo}";
-            foreach (Edificio e in foto.EdificiosEnemigo)
-                if (e.PosicionX == x && e.PosicionY == y)
-                    return $"casilla ocupada por {e.Tipo}";
+            int lado = DatosDelJuego.LadoSegunTipo(tipo);
+            for (int dx = 0; dx < lado; dx++)
+                for (int dy = 0; dy < lado; dy++)
+                {
+                    int cx = x + dx, cy = y + dy;
+                    foreach (Recurso r in foto.Recursos)
+                        if (r.PosicionX == cx && r.PosicionY == cy)
+                            return $"hay un yacimiento de {r.Tipo}";
+                }
+            for (int dx = 0; dx < lado; dx++)
+                for (int dy = 0; dy < lado; dy++)
+                {
+                    int cx = x + dx, cy = y + dy;
+                    foreach (Unidad u in foto.UnidadesLocal)
+                        if (u.EstaViva && u.PosicionX == cx && u.PosicionY == cy)
+                            return "casilla ocupada por una unidad";
+                    foreach (Unidad u in foto.UnidadesEnemigo)
+                        if (u.EstaViva && u.PosicionX == cx && u.PosicionY == cy)
+                            return "casilla ocupada por una unidad";
+                    foreach (Edificio e in foto.EdificiosLocal)
+                        if (e.Ocupa(cx, cy))
+                            return $"casilla ocupada por {e.Tipo}";
+                    foreach (Edificio e in foto.EdificiosEnemigo)
+                        if (e.Ocupa(cx, cy))
+                            return $"casilla ocupada por {e.Tipo}";
+                }
 
             EdificioConfig cfg = DatosDelJuego.EdificiosBase[tipo];
             var faltan = new List<string>();
@@ -701,10 +1102,10 @@ namespace Vista
             if (x < 0 || y < 0 || x >= Mapa.Ancho || y >= Mapa.Alto)
                 return "fuera del mapa";
             foreach (Edificio e in foto.EdificiosLocal)
-                if (e.PosicionX == x && e.PosicionY == y)
+                if (e.Ocupa(x, y))
                     return $"casilla ocupada por {e.Tipo}";
             foreach (Edificio e in foto.EdificiosEnemigo)
-                if (e.PosicionX == x && e.PosicionY == y)
+                if (e.Ocupa(x, y))
                     return $"casilla ocupada por {e.Tipo}";
             if (!foto.EnEjecucion)
                 return "partida pausada o terminada";
@@ -737,7 +1138,7 @@ namespace Vista
         private static string MotivoAtacar(Unidad atacante, Unidad enemigo)
         {
             if (enemigo == null || !enemigo.EstaViva) return "objetivo ya muerto";
-            if (!atacante.PuedeAtacar) return "los aldeanos no atacan";
+            if (!atacante.PuedeAtacar && enemigo.Tipo != TipoUnidad.Ciervo) return "los aldeanos no atacan";
             int d = Mathf.Abs(atacante.PosicionX - enemigo.PosicionX)
                   + Mathf.Abs(atacante.PosicionY - enemigo.PosicionY);
             if (d > atacante.RangoAtaque)
@@ -784,7 +1185,8 @@ namespace Vista
             }
         }
 
-        // Botones de acción en la barra inferior (placeholder; issue #6/#9 los embellece).
+        // Botones de acción en el PANEL LATERAL derecho (vertical, estilo RTS
+        // clásico). Los atajos de teclado no cambian.
         private void ConstruirBotonesSiFaltan()
         {
             if (transform.Find("BarraAcciones") != null) return;
@@ -801,53 +1203,159 @@ namespace Vista
             var barra = new GameObject("BarraAcciones", typeof(RectTransform));
             barra.transform.SetParent(canvas.transform, false);
             var rt = (RectTransform)barra.transform;
-            rt.anchorMin = new Vector2(0.5f, 0);
-            rt.anchorMax = new Vector2(0.5f, 0);
-            rt.pivot = new Vector2(0.5f, 0);
-            rt.sizeDelta = new Vector2(1040, 52);
-            rt.anchoredPosition = new Vector2(0, 8);
+            rt.anchorMin = new Vector2(1, 0.5f);
+            rt.anchorMax = new Vector2(1, 0.5f);
+            rt.pivot = new Vector2(1, 0.5f);
+            rt.sizeDelta = new Vector2(156, 766);
+            rt.anchoredPosition = new Vector2(-8, 0);
             var img = barra.AddComponent<Image>();
-            img.color = new Color(0, 0, 0, 0.55f);
+            img.color = new Color(0.10f, 0.14f, 0.12f, 0.95f);
             img.raycastTarget = false;
 
-            CrearBoton(barra.transform, "Casa [1]", () => IniciarConstruccion(TipoEdificio.Casa), 0);
-            CrearBoton(barra.transform, "Cuartel [2]", () => IniciarConstruccion(TipoEdificio.Cuartel), 1);
-            CrearBoton(barra.transform, "Torre [3]", () => IniciarConstruccion(TipoEdificio.Torre), 2);
-            CrearBoton(barra.transform, "Aldeano [Q]", () => Entrenar(TipoUnidad.Aldeano, TipoEdificio.CentroUrbano), 3);
-            CrearBoton(barra.transform, "Soldado [W]", () => Entrenar(TipoUnidad.Soldado, TipoEdificio.Cuartel), 4);
-            CrearBoton(barra.transform, "Recoger [C]", IniciarModoRecoger, 5);
-            CrearBoton(barra.transform, "Item [I]", RecogerItemCercano, 6);
+            var titulo = UiFabrica.TextoCaja(barra.transform, "TituloAcciones", "ACCIONES",
+                new Vector2(0.5f, 1f), new Vector2(140, 28), new Vector2(0, -20), 15);
+            titulo.alignment = TextAnchor.MiddleCenter;
+            titulo.color = new Color(1f, 0.85f, 0.4f, 1f);
+
+            Sprite[] iconosEdificios = ArteRecursos.CargarEdificios();
+            Sprite[] iconosUnidades = SpriteFactory.Unidades();
+            CrearBotonEstructura(barra.transform, "Casa [1]", TipoEdificio.Casa, () => IniciarConstruccion(TipoEdificio.Casa), 0, iconosEdificios);
+            CrearBotonEstructura(barra.transform, "Cuartel [2]", TipoEdificio.Cuartel, () => IniciarConstruccion(TipoEdificio.Cuartel), 1, iconosEdificios);
+            CrearBotonEstructura(barra.transform, "Torre [3]", TipoEdificio.Torre, () => IniciarConstruccion(TipoEdificio.Torre), 2, iconosEdificios);
+            CrearBotonEstructura(barra.transform, "Centro [4]", TipoEdificio.CentroUrbano, () => IniciarConstruccion(TipoEdificio.CentroUrbano), 3, iconosEdificios);
+            CrearBotonEstructura(barra.transform, "Aldeano [Q]", TipoUnidad.Aldeano, () => Entrenar(TipoUnidad.Aldeano, TipoEdificio.CentroUrbano), 4, iconosUnidades);
+            CrearBotonEstructura(barra.transform, "Soldado [W]", TipoUnidad.Soldado, () => Entrenar(TipoUnidad.Soldado, TipoEdificio.Cuartel), 5, iconosUnidades);
+            CrearBotonEstructura(barra.transform, "Arquero [E]", TipoUnidad.Arquero, () => Entrenar(TipoUnidad.Arquero, TipoEdificio.Cuartel), 6, iconosUnidades);
+            CrearBotonEstructura(barra.transform, "Caballero [R]", TipoUnidad.Caballero, () => Entrenar(TipoUnidad.Caballero, TipoEdificio.Cuartel), 7, iconosUnidades);
+            CrearBotonAccion(barra.transform, "Recoger [C]", "clic en mapa", IniciarModoRecoger, 8);
+            CrearBotonAccion(barra.transform, "Item [I]", "el más cercano", RecogerItemCercano, 9);
+            CrearBotonAccion(barra.transform, "Mercado [T]", "trueque", () => _gestor.MenuMercado?.Alternar(), 10);
+            CrearBotonAccion(barra.transform, "Mejoras [Y]", "herrería", () => _gestor.MenuMejoras?.Alternar(), 11);
+            CrearBotonAccion(barra.transform, "Menú", "volver al inicio", () => _gestor.MenuInicio?.Mostrar(), 12);
+
+            ConstruirBarraSeleccionSiFalta(canvas.transform);
+        }
+
+        // Botón de estructura/unidad con icono y costo (interfaz de construcción RTS).
+        private static void CrearBotonEstructura(Transform padre, string etiqueta, TipoEdificio tipo,
+            UnityEngine.Events.UnityAction accion, int indice, Sprite[] iconos)
+        {
+            Sprite icono = (iconos != null && (int)tipo >= 0 && (int)tipo < iconos.Length) ? iconos[(int)tipo] : null;
+            EdificioConfig cfg = DatosDelJuego.EdificiosBase[tipo];
+            UiFabrica.BotonEstructura(padre, etiqueta,
+                CostoCorto(cfg.CostoMadera, cfg.CostoOro, cfg.CostoComida, cfg.CostoHierro, cfg.CostoPiedra),
+                accion, new Vector2(0.5f, 1f), new Vector2(140, 52), new Vector2(0, -(50 + indice * 54)), icono);
+        }
+
+        private static void CrearBotonEstructura(Transform padre, string etiqueta, TipoUnidad tipo,
+            UnityEngine.Events.UnityAction accion, int indice, Sprite[] iconos)
+        {
+            Sprite icono = (iconos != null && (int)tipo >= 0 && (int)tipo < iconos.Length) ? iconos[(int)tipo] : null;
+            UnidadConfig cfg = DatosDelJuego.UnidadesBase[tipo];
+            UiFabrica.BotonEstructura(padre, etiqueta,
+                CostoCorto(cfg.CostoMadera, cfg.CostoOro, cfg.CostoComida, cfg.CostoHierro, cfg.CostoPiedra),
+                accion, new Vector2(0.5f, 1f), new Vector2(140, 52), new Vector2(0, -(50 + indice * 54)), icono);
+        }
+
+        private static void CrearBotonAccion(Transform padre, string etiqueta, string pista,
+            UnityEngine.Events.UnityAction accion, int indice)
+        {
+            UiFabrica.BotonEstructura(padre, etiqueta, pista, accion,
+                new Vector2(0.5f, 1f), new Vector2(140, 52), new Vector2(0, -(50 + indice * 54)), null);
+        }
+
+        private static string CostoCorto(int m, int o, int c, int h, int p)
+        {
+            string s = "";
+            if (m > 0) s += m + "M ";
+            if (o > 0) s += o + "O ";
+            if (c > 0) s += c + "C ";
+            if (h > 0) s += h + "H ";
+            if (p > 0) s += p + "P";
+            s = s.Trim();
+            return s == "" ? "Gratis" : s;
+        }
+
+        // Panel lateral IZQUIERDO: atajos de selección por tipo (lo mismo que
+        // Alt+QWER, pero clicable). Solo lee la foto; no toca el Modelo.
+        private void ConstruirBarraSeleccionSiFalta(Transform canvas)
+        {
+            if (transform.Find("BarraSeleccion") != null) return;
+
+            var sel = new GameObject("BarraSeleccion", typeof(RectTransform));
+            sel.transform.SetParent(canvas, false);
+            var rt = (RectTransform)sel.transform;
+            rt.anchorMin = new Vector2(0, 0.5f);
+            rt.anchorMax = new Vector2(0, 0.5f);
+            rt.pivot = new Vector2(0, 0.5f);
+            rt.sizeDelta = new Vector2(150, 288);
+            rt.anchoredPosition = new Vector2(8, 30);
+            var img = sel.AddComponent<Image>();
+            img.color = new Color(0.10f, 0.14f, 0.12f, 0.95f);
+            img.raycastTarget = false;
+
+            var tituloT = UiFabrica.TextoCaja(sel.transform, "TituloTropas", "TROPAS",
+                new Vector2(0.5f, 1f), new Vector2(140, 28), new Vector2(0, -20), 15);
+            tituloT.alignment = TextAnchor.MiddleCenter;
+            tituloT.color = new Color(1f, 0.85f, 0.4f, 1f);
+
+            CrearBoton(sel.transform, "Aldeanos [AQ]", () => SeleccionarPorTipo(TipoUnidad.Aldeano), 0);
+            CrearBoton(sel.transform, "Soldados [AW]", () => SeleccionarPorTipo(TipoUnidad.Soldado), 1);
+            CrearBoton(sel.transform, "Arqueros [AE]", () => SeleccionarPorTipo(TipoUnidad.Arquero), 2);
+            CrearBoton(sel.transform, "Caballeros [AR]", () => SeleccionarPorTipo(TipoUnidad.Caballero), 3);
+            CrearBoton(sel.transform, "Todos", SeleccionarTodas, 4);
+        }
+
+        // Selecciona todas tus unidades vivas (para darles la misma orden).
+        private void SeleccionarTodas()
+        {
+            var foto = _gestor.UltimaFoto;
+            _seleccionadas.Clear();
+            _edificioSeleccionado = null;
+            if (foto != null)
+                foreach (Unidad u in foto.UnidadesLocal)
+                    if (u.EstaViva) _seleccionadas.Add(u);
+            RefrescarMarcas();
+            if (_seleccionadas.Count == 0)
+                _gestor.MostrarMensaje("Sin unidades vivas");
+            else
+                _gestor.MostrarMensaje($"{_seleccionadas.Count} unidades seleccionadas");
+        }
+
+        // M: vista completa del mapa (zoom para verlo todo) y vuelta.
+        // Guarda el zoom/posición previos para restaurarlos.
+        private bool _vistaCompleta;
+        private float _zoomPrevio = 15.5f;
+        private Vector3 _posPrevia;
+
+        private void AlternarVistaCompleta()
+        {
+            Camera cam = Cam();
+            if (cam == null || !cam.orthographic) return;
+            if (!_vistaCompleta)
+            {
+                _vistaCompleta = true;
+                _zoomPrevio = cam.orthographicSize;
+                _posPrevia = cam.transform.position;
+                float mitad = Mathf.Max(Mapa.Ancho, Mapa.Alto) / 2f + 2f;
+                cam.orthographicSize = Mathf.Min(mitad, 55f);
+                cam.transform.position = new Vector3(
+                    (Mapa.Ancho - 1) / 2f, (Mapa.Alto - 1) / 2f, cam.transform.position.z);
+                _gestor.MostrarMensaje("Vista completa del mapa [M]");
+            }
+            else
+            {
+                _vistaCompleta = false;
+                cam.orthographicSize = _zoomPrevio;
+                MoverCamaraA(_posPrevia);
+                _gestor.MostrarMensaje("Vista normal [M]");
+            }
         }
 
         private static void CrearBoton(Transform padre, string etiqueta, UnityEngine.Events.UnityAction accion, int indice)
         {
-            var go = new GameObject("Btn_" + etiqueta, typeof(RectTransform), typeof(Image), typeof(Button));
-            go.transform.SetParent(padre, false);
-            var rt = (RectTransform)go.transform;
-            rt.anchorMin = new Vector2(0, 0.5f);
-            rt.anchorMax = new Vector2(0, 0.5f);
-            rt.pivot = new Vector2(0, 0.5f);
-            rt.sizeDelta = new Vector2(130, 40);
-            rt.anchoredPosition = new Vector2(8 + indice * 142, 0);
-
-            go.GetComponent<Image>().color = new Color(0.2f, 0.35f, 0.55f, 0.95f);
-            var btn = go.GetComponent<Button>();
-            btn.onClick.AddListener(accion);
-
-            var txtGo = new GameObject("Txt", typeof(RectTransform), typeof(Text));
-            txtGo.transform.SetParent(go.transform, false);
-            var trt = (RectTransform)txtGo.transform;
-            trt.anchorMin = Vector2.zero;
-            trt.anchorMax = Vector2.one;
-            trt.offsetMin = Vector2.zero;
-            trt.offsetMax = Vector2.zero;
-            var t = txtGo.GetComponent<Text>();
-            t.font = HudRecursos.RecursoFuente();
-            t.fontSize = 14;
-            t.alignment = TextAnchor.MiddleCenter;
-            t.color = Color.white;
-            t.text = etiqueta;
-            t.raycastTarget = false;
+            UiFabrica.Boton(padre, etiqueta, accion,
+                new Vector2(0.5f, 1f), new Vector2(136, 38), new Vector2(0, -(50 + indice * 46)), 14);
         }
     }
 }
