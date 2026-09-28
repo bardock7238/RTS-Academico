@@ -106,6 +106,7 @@ namespace Vista
             hudRecursos?.Actualizar(UltimaFoto, this);
             panelFin?.Actualizar(UltimaFoto);
             VigilarEventosSonido();
+            VigilarDesconexion();
 
             if (Time.unscaledTime > _mensajeHasta)
                 MensajeEstado = null;
@@ -137,6 +138,37 @@ namespace Vista
             _sonBajas = bajas;
             _sonUnidades = unds;
             _sonEdificios = edifOp;
+        }
+
+        // En partida en red, si el rival se cae DE VERDAD (5 s sin tubo),
+        // se cierra la partida y se vuelve al menú en vez de dejar el mundo
+        // colgado. Los microcortes se perdonan (el cliente reintenta solo).
+        private bool _rivalVisto;
+        private float _caidaDesde = -1f;
+        private const float SegundosParaMenuPorCaida = 5f;
+
+        private void VigilarDesconexion()
+        {
+            var ctrl = Controlador;
+            if (ctrl == null || ctrl.RedPartida == null)
+            {
+                _rivalVisto = false;
+                _caidaDesde = -1f;
+                return;
+            }
+            if (!string.IsNullOrEmpty(ctrl.NombreRivalRed)) _rivalVisto = true;
+            if (!_rivalVisto) return; // aún no había rival: esperando conexión
+            if (ctrl.RedPartida.EstaConectado) { _caidaDesde = -1f; return; }
+            if (_caidaDesde < 0f) _caidaDesde = Time.unscaledTime;
+            if (Time.unscaledTime - _caidaDesde < SegundosParaMenuPorCaida) return;
+            // Caída sostenida: cerrar red y volver al menú principal.
+            _rivalVisto = false;
+            _caidaDesde = -1f;
+            Controlador.Detener();
+            Controlador = new JuegoControlador(nombreJugador, localArriba);
+            _sonBajas = -1;
+            menuInicio?.Mostrar();
+            MostrarMensaje("Rival desconectado.", 5f, false);
         }
 
         private void OnDestroy()

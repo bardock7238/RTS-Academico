@@ -22,6 +22,7 @@ classDiagram
         Soldado
         Arquero
         Caballero
+        Ciervo
     }
     class TipoEdificio {
         <<enumeration>>
@@ -59,6 +60,12 @@ classDiagram
         Operativo
         Destruido
     }
+    class RitmoPartida {
+        <<enumeration>>
+        Rapida
+        Normal
+        Larga
+    }
 
     class Unidad {
         +TipoUnidad Tipo
@@ -74,7 +81,9 @@ classDiagram
         +EstadoUnidad Estado
         +Item Equipado
         +bool ControladaPorIA
+        +int Bando
         +Unidad Objetivo
+        +Edificio ObjetivoEdificio
         +int TiempoEsperaAtaque
         +bool EstaViva
         +bool PuedeAtacar
@@ -91,6 +100,9 @@ classDiagram
         +int VidaMaxima
         +int PosicionX
         +int PosicionY
+        +int Lado
+        +string Faccion
+        +int Bando
         +EstadoEdificio Estado
         +List~TipoUnidad~ UnidadesEntrenables
         +bool EstaViva
@@ -196,8 +208,17 @@ classDiagram
         +object Candado
         +Jugador JugadorLocal
         +Jugador JugadorEnemigo
+        +Edificio CapitalEnemiga
         +Mapa Tablero
         +Partida EstadoPartida
+        +bool ModoExploracion
+        +int RadioVision
+        +EsVisible(int, int) bool
+        +double FactorDanoIA
+        +int GraciaMilitarSegundos
+        +bool ReposicionAldeanos
+        +int RadioAsedioIA
+        +AplicarRitmo(RitmoPartida)
         +IReadOnlyList~Item~ ItemsVisibles
         +bool HaySalientes
         +SiguienteSaliente() string
@@ -229,6 +250,7 @@ classDiagram
         +Atacar(Unidad, Unidad) bool
         +MoverAAtacar(Unidad, Unidad) bool
         +AtacarEdificio(Unidad, Edificio) bool
+        +MoverAAtacarEdificio(Unidad, Edificio) bool
         +ColocarItem(TipoItem, int, int) bool
         +RecogerItem(Unidad, Item) bool
         +VerificarGanador()
@@ -302,6 +324,11 @@ classDiagram
         +Atacar(Unidad, Unidad) bool
         +MoverAAtacar(Unidad, Unidad) bool
         +AtacarEdificio(Unidad, Edificio) bool
+        +MoverAAtacarEdificio(Unidad, Edificio) bool
+        +CapitalEnemiga
+        +AplicarRitmo(RitmoPartida)
+        +ModoExploracion
+        +EsVisible(int, int) bool
         +ColocarItem(TipoItem, int, int, bool) bool
         +RecogerItem(Unidad, Item) bool
         +IniciarBatalla(int) int
@@ -919,3 +946,44 @@ sequenceDiagram
 3. **Convergencia:** Ambos jugadores ejecutan la MISMA fórmula de daño → mismo resultado sin enviar estado completo.
 4. **Reconexión:** Si la red cae, `ConectorRed` reintenta cada 1 segundo sin bloquear el juego.
 5. **Logs asíncronos:** `GestorArchivos` usa productor-consumidor para que la escritura a disco nunca frene la simulación.
+
+### 6.5 Flujo de demolición (clic en edificio enemigo)
+
+```mermaid
+flowchart TD
+    A[Clic en edificio] --> B[MoverAAtacarEdificio]
+    B --> C{¿A golpe\ny listo?}
+    C -->|Sí| D[AtacarEdificio:\ndaño + FIN si cae]
+    C -->|No| E[Hueco junto a huella\na distancia de golpe]
+    E --> F{¿Hay hueco?}
+    F -->|No| Z[Rechazado:\nsin hueco]
+    F -->|Sí| G[ObjetivoEdificio fijado:\ncamina solo]
+    G --> H{¿Llegó a golpe?}
+    H -->|Sí| D
+    H -->|No| G
+    D --> I{¿Demolido?}
+    I -->|Sí| J[ObjetivoEdificio = null +\nVerificarGanador]
+    I -->|No| K[Repite al enfriarse]
+```
+
+Solo otra orden del jugador (mover, Esc, recolectar, otro ataque) suelta el
+asedio. Las esquinas diagonales no valen como hueco (quedan a distancia 2).
+
+### 6.6 FFA por bandos y niebla de exploración
+
+```mermaid
+flowchart TD
+    A[Unidad IA] --> B[HostilMasCercano:\nbandos distintos]
+    B --> C{¿Hay hostil\ncerca?}
+    C -->|Sí| D[Perseguir y pegar]
+    C -->|No| E[AsediarCentro:\ncentro hostil más cercano]
+    F[Tus unidades\ncada latido] --> G[RevelarDesde radio 9]
+    G --> H[Vista oculta lo no visto:\ntablero + minimapa]
+```
+
+- **Bandos:** 0 = jugador, 1..5 = aldeas enemigas. Entrenar hereda el bando
+  del edificio; construir, el del centro más cercano. Sin eliminación de
+  bandos (v1): pelean y se debilitan, pero solo el jugador gana/pierde.
+- **Niebla (modo exploración):** `_visto[,]` en el Modelo, `EsVisible(x,y)`
+  para la Vista. La capital enemiga sale en puesto aleatorio (manhattan
+  ≥ 70 de tu base). Ganar = destruirla sin saber dónde está.

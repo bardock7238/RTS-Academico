@@ -200,17 +200,30 @@ Se validó fuera de Unity (los scripts no usan `UnityEngine`), en proyectos temp
   - **RECONEXIÓN AUTOMÁTICA**: se corta el tubo → ambos se reconectan solos y el saludo vuelve a fluir.
 - **Demo interactiva** (`red-real`): 2 procesos reales (uno por PC), comandos por teclado; validado con 2 instancias localhost.
 
-### Cómo probar la red en 2 máquinas reales
+### Cómo probar la red en 2 máquinas reales (actualizado 28-sep: modal en juego)
 
 1. Ambas PCs en la **misma red local**.
 2. En la **PC del host** (PowerShell como administrador) abrir el puerto:
    ```
-   netsh advfirewall firewall add rule name="RTS-Academico" dir=in action=allow protocol=TCP localport=5510
+   New-NetFirewallRule -DisplayName "RTS Unity 5505" -Direction Inbound -Protocol TCP -LocalPort 5505 -Action Allow -Profile Any
    ```
-3. En la PC host: ejecutar la demo con argumento `host`. Anotar la IP que aparece.
-4. En la PC retador: ejecutar `cliente <ip-del-host>`. Si el host aún no abrió, el cliente reintenta cada 1 s.
-5. Escribir `estado` en cada PC → ver el mundo local y el espejo del rival. Para salir: `salir`.
-6. Para **cortar el firewall** después: `netsh advfirewall firewall delete rule name="RTS-Academico"`.
+   (En Linux Mint: `sudo ufw allow 5505/tcp`. Si la red WiFi es pública, la regla debe cubrirla o pasarla a privada.)
+3. En el host: menú `JUGAR EN RED` → `HOSPEDAR`. Anotar la IP que muestra.
+4. En el retador: `JUGAR EN RED` → escribir solo la IP → `CONECTAR`. Si el host aún no abrió, el cliente reintenta cada 1 s.
+5. Al conectar se cierra el menú solo (`Rival conectado`). Para salir: fin de partida → `Menú`.
+6. Si un lado se cae 5 s seguidos, el otro vuelve al menú solo (microcortes se perdonan por la reconexión automática).
+
+---
+
+## Sesión 28-sep (Muse Spark): modos, FFA, niebla y red en menú
+
+- **Ritmo** (`RitmoPartida` Rápida/Normal/Larga: gracia 60/180/420 s, daño IA 85/60/45 %) e **inicio rico** (+recursos, 2 aldeanos, Casa) en el menú.
+- **Regicidio asimétrico**: el enemigo cae sin su capital (anillo dorado); el jugador, sin Centro o sin ejército; motivo en el panel final.
+- **Demoler con clic**: `MoverAAtacarEdificio` (camina a la huella y no suelta); la IA **asedia** el Centro hostil más cercano (radio 15, con gracia y handicap).
+- **FFA por bandos** (0 jugador, 1..5 aldeas): se atacan entre ellas; entrenar/construir heredan bando.
+- **Mapa 140×140** (misma simetría), **modo exploración** con niebla (tablero + minimapa) y capital aleatoria; **grupos 5-9**, **sonido procedural** (S/botón), facción visible e inspección.
+- **Red en menú** (`MenuRed` + `IniciarPartidaRed`, puerto 5505, `NoDelay`, vuelta al menú a los 5 s de caída).
+- **Verificación**: suites PVE 36 OK + red 8 OK, scratch 50+ checks, batch Unity `TODO OK` (salvo test de aniquilación del compañero, incompatible con regicidio: pendiente de equipo).
 
 ---
 

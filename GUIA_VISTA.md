@@ -170,6 +170,7 @@ foto.Piedra             // int  ← nuevo recurso
 foto.TiempoJuegoSegundos  // int
 foto.EnEjecucion           // bool
 foto.GanadorNombre         // string (null si la partida sigue)
+foto.MotivoVictoria        // string (causa del fin: regicidio, aniquilación...)
 ```
 
 ### 2.3 Acciones del jugador → Controlador → Modelo
@@ -195,6 +196,15 @@ ctrl.EstaRecolectando(aldeano);               // → bool (para colorear el spri
 ctrl.MoverAAtacar(miUnidad, unidadEnemiga);     // → bool (acepta aunque no esté en rango)
 ctrl.Atacar(miUnidad, unidadEnemiga);            // → bool (solo si ya está en rango)
 ctrl.AtacarEdificio(miUnidad, edificioEnemigo); // → bool
+
+// Demoler (clic en edificio: camina hasta la huella y no lo suelta)
+ctrl.MoverAAtacarEdificio(miUnidad, edificioEnemigo); // → bool
+
+// Ritmo e inicio (menú escenario; también en caliente el ritmo)
+ctrl.AplicarRitmo(RitmoPartida.Rapida);  // gracia 60 s, IA 85%
+ctrl.CapitalEnemiga                      // Edificio (objetivo del regicidio)
+ctrl.ModoExploracion                     // bool (niebla activa o no)
+ctrl.EsVisible(x, y);                    // → bool (casilla revelada o no)
 
 // Items
 ctrl.ColocarItem(TipoItem.Yogur, x, y, enviarPorRed: false); // → bool (host)
@@ -549,6 +559,19 @@ public class PanelFinPartida : MonoBehaviour
     }
 }
 ```
+
+### 3.7 `MenuRed.cs` — partida en red (2 PCs)
+
+Modal con IP del host + `HOSPEDAR` / `CONECTAR` / `VOLVER`. Usa
+`_gestor.IniciarPartidaRed(esHost, ip)` (sin IA, puerto 5505) y se cierra
+solo al llegar el `SALUDO` del rival (`NombreRivalRed != null`).
+
+### 3.8 `SonidoJuego.cs` — efectos y música procedurales
+
+Sin assets: ondas seno/ruido generadas por código (clic, error, golpe,
+construir, entrenar, caza, victoria, derrota + ambiente en bucle).
+Llamadas estáticas nulas si no existe; `S` o botón del HUD silencian
+(`AudioListener.pause`).
 
 ---
 
