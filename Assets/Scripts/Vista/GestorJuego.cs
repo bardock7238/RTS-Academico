@@ -70,6 +70,10 @@ namespace Vista
             }
             _instancia = this;
 
+            // Pantalla completa sin bordes al arrancar (builds .exe/Linux).
+            Screen.fullScreenMode = FullScreenMode.FullScreenWindow;
+            Screen.fullScreen = true;
+
             GestorArchivos.CarpetaDestino = Application.persistentDataPath;
 
             Controlador = new JuegoControlador(nombreJugador, localArriba);
