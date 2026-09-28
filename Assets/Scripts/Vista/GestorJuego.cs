@@ -47,6 +47,12 @@ namespace Vista
         // Reintentar salta el menú inicial (lo pone el botón de fin de partida).
         public static bool SaltarMenuInicial { get; set; }
 
+        // Último escenario jugado (para Reintentar sin recargar la escena).
+        private int _ultBases = 1;
+        private bool _ultAdvE, _ultAdvY, _ultRico, _ultExp;
+        private RitmoPartida _ultRitmo = RitmoPartida.Normal;
+        private bool _ultFueRed;
+
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void AutoCrear()
         {
@@ -175,7 +181,7 @@ namespace Vista
         {
             if (_instancia == this)
             {
-                Controlador?.Detener();
+                try { Controlador?.Detener(); } catch { }
                 _instancia = null;
             }
         }
@@ -217,6 +223,13 @@ namespace Vista
             RitmoPartida ritmo = RitmoPartida.Normal, bool inicioRico = false,
             bool exploracion = false)
         {
+            _ultBases = basesEnemigas;
+            _ultAdvE = enemigoAvanzado;
+            _ultAdvY = jugadorAvanzado;
+            _ultRitmo = ritmo;
+            _ultRico = inicioRico;
+            _ultExp = exploracion;
+            _ultFueRed = false;
             Controlador?.Detener();
             Controlador = new JuegoControlador(nombreJugador, localArriba,
                 basesEnemigas, enemigoAvanzado, jugadorAvanzado, ritmo, inicioRico, exploracion);
@@ -233,6 +246,7 @@ namespace Vista
         // el cliente abajo, con el mismo mundo espejado por TCP (puerto 5505).
         public void IniciarPartidaRed(bool esHost, string ip)
         {
+            _ultFueRed = true;
             Controlador?.Detener();
             Controlador = new JuegoControlador(nombreJugador, esHost, 1, false, false);
             _sonBajas = -1; // el mundo nuevo sincroniza el sonido sin sonar
@@ -250,6 +264,36 @@ namespace Vista
                 else
                     AccionRechazada($"red: no se pudo conectar a {ip}:5505");
             }
+        }
+
+        // Reintentar SIN recargar la escena (instantáneo): recrea el mundo con
+        // el último escenario. Si lo último fue red, vuelve al menú de red.
+        public void ReintentarUltimaPartida()
+        {
+            panelFin?.Ocultar();
+            controlInput?.LimpiarTodo();
+            hudRecursos?.Reiniciar();
+            LimpiarMensaje();
+            if (_ultFueRed)
+            {
+                menuRed?.Mostrar();
+                return;
+            }
+            ReiniciarConEscenario(_ultBases, _ultAdvE, _ultAdvY, _ultRitmo, _ultRico, _ultExp);
+        }
+
+        // Volver al menú SIN recargar: cierra el fin, detiene el mundo y abre
+        // el inicio (el próximo Jugar crea mundo nuevo).
+        public void VolverAlMenu()
+        {
+            panelFin?.Ocultar();
+            controlInput?.LimpiarTodo();
+            hudRecursos?.Reiniciar();
+            LimpiarMensaje();
+            Controlador?.Detener();
+            Controlador = new JuegoControlador(nombreJugador, localArriba);
+            _sonBajas = -1;
+            menuInicio?.Mostrar();
         }
 
         // Si la escena no trae HUD (bootstrap mínimo), la Vista crea su propia UI

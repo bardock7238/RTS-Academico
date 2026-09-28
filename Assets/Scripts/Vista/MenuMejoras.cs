@@ -34,8 +34,9 @@ namespace Vista
         public void Abrir()
         {
             ConstruirSiFalta();
-            Refrescar();
-            if (_panel != null) _panel.SetActive(true);
+            if (_panel == null) return;
+            _panel.transform.SetAsLastSibling(); // modal encima de barras/HUD
+            _panel.SetActive(true);
         }
 
         public void Cerrar()

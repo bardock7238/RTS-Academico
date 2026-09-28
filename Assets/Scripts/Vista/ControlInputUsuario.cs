@@ -96,6 +96,18 @@ namespace Vista
             RefrescarMarcas();
         }
 
+        // Limpieza total al reintentar/volver (las unidades viejas son de
+        // otro mundo: sin esto, el próximo clic daría "No se pudo").
+        public void LimpiarTodo()
+        {
+            _seleccionadas.Clear();
+            _edificioSeleccionado = null;
+            _modoConstruccion = null;
+            _modoRecoger = false;
+            _grupos.Clear();
+            RefrescarMarcas();
+        }
+
         // Ctrl+5-9: guarda la selección viva en el grupo N (sobrescribe).
         private void GuardarGrupo(int n)
         {

@@ -35,6 +35,15 @@ namespace Vista
             ConstruirSiFalta();
         }
 
+        // Reinicia los antivalores para que el mundo nuevo repinte todo
+        // (si no, los valores iguales al anterior no se reescribirían).
+        public void Reiniciar()
+        {
+            _oro = int.MinValue; _madera = int.MinValue; _comida = int.MinValue;
+            _hierro = int.MinValue; _piedra = int.MinValue; _tiempo = int.MinValue;
+            _estado = null; _mensaje = null;
+        }
+
         public void Actualizar(InstantaneaJuego foto, GestorJuego gestor)
         {
             if (foto == null) return;

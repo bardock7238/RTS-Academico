@@ -38,7 +38,9 @@ namespace Vista
         public void Mostrar()
         {
             ConstruirSiFalta();
-            if (_panel != null) _panel.SetActive(true);
+            if (_panel == null) return;
+            _panel.transform.SetAsLastSibling();
+            _panel.SetActive(true);
             MostrarAyuda(false);
         }
 
@@ -178,6 +180,7 @@ namespace Vista
                 canvasGo.transform.SetParent(transform, false);
                 canvas = canvasGo.GetComponent<Canvas>();
                 canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+                canvas.sortingOrder = 90; // menú bajo el fin (100), sobre el HUD
             }
 
             _panel = UiFabrica.Panel(canvas.transform, "ModalMenuInicio",

@@ -30,7 +30,9 @@ namespace Vista
         public void Mostrar()
         {
             ConstruirSiFalta();
-            if (_panel != null) _panel.SetActive(true);
+            if (_panel == null) return;
+            _panel.transform.SetAsLastSibling();
+            _panel.SetActive(true);
             _esperando = false;
             PonerEstado("Pon la IP del host o hospeda tu partida.");
         }
@@ -110,6 +112,7 @@ namespace Vista
                 canvasGo.transform.SetParent(transform, false);
                 canvas = canvasGo.GetComponent<Canvas>();
                 canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+                canvas.sortingOrder = 95; // red sobre el inicio (90), bajo el fin (100)
             }
 
             _panel = UiFabrica.Panel(canvas.transform, "ModalMenuRed",

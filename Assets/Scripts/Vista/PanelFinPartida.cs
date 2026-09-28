@@ -61,12 +61,8 @@ namespace Vista
 
         private void Reiniciar()
         {
-            // Reintentar salta el menú inicial (vuelve directo a la partida).
-            GestorJuego.SaltarMenuInicial = true;
-            // OnDestroy del GestorJuego llama Detener(); aquí solo recargamos
-            // para que AutoCrear() arme una partida nueva limpia.
-            UnityEngine.SceneManagement.SceneManager.LoadScene(
-                UnityEngine.SceneManagement.SceneManager.GetActiveScene().buildIndex);
+            // Reintentar sin recargar la escena (instantáneo, sin congelón).
+            _gestor?.ReintentarUltimaPartida();
         }
 
         private void ConstruirSiFalta()
@@ -82,6 +78,7 @@ namespace Vista
                 canvasGo.transform.SetParent(transform, false);
                 canvas = canvasGo.GetComponent<Canvas>();
                 canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+                canvas.sortingOrder = 100; // el fin va encima de HUD, barras y menús
             }
 
             panel = UiFabrica.Panel(canvas.transform, "ModalFin",
@@ -117,8 +114,15 @@ namespace Vista
 
         private void VolverAlMenu()
         {
-            UnityEngine.SceneManagement.SceneManager.LoadScene(
-                UnityEngine.SceneManagement.SceneManager.GetActiveScene().buildIndex);
+            // Al menú sin recargar: el gestor detiene el mundo y abre el inicio.
+            _gestor?.VolverAlMenu();
+        }
+
+        // Oculta el modal y permite que vuelva a mostrarse (reintento/menú).
+        public void Ocultar()
+        {
+            _mostrado = false;
+            if (panel != null) panel.SetActive(false);
         }
     }
 }
