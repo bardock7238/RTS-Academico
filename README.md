@@ -181,6 +181,8 @@ Los yacimientos dentro de un bioma rinden **+50% por ciclo**.
 - Mapa **140×140** (misma simetría y densidades del 100×100).
 - **Red PVP** (menú `JUGAR EN RED`): 2 PCs en la misma red, puerto TCP 5505;
   el host hospeda y el cliente conecta con su IP (sin IA, mundo espejado).
+  Latido `PING/PONG` anti-tubo-muerto, tope de 500 mensajes/frame y vuelta
+  al menú si el rival se cae 5 s.
 - **Modo exploración** (menú): niebla de guerra en tablero y minimapa; tus
   unidades revelan al moverse y ganas destruyendo la capital sin saber
   dónde está (regicidio a ciegas, capital en ubicación aleatoria).

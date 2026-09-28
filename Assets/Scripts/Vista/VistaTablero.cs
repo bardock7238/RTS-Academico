@@ -51,9 +51,10 @@ namespace Vista
         private int _fantasmaX, _fantasmaY;
         private bool _fantasmaValido;
 
-        // Niebla de guerra (modo exploración): capa oscura sobre lo oculto.
-        // Se construye una vez por mundo; por frame solo se apagan celdas.
-        private readonly List<SpriteRenderer> _niebla = new List<SpriteRenderer>();
+        // Niebla de guerra (modo exploración): se tiñe la rejilla existente
+        // (cero objetos nuevos). Por frame solo cambian las celdas reveladas.
+        private readonly List<Color> _rejillaBase = new List<Color>();
+        private static readonly Color ColorNiebla = new Color(0.05f, 0.05f, 0.10f, 1f);
         private bool[,] _nieblaVista;
         private object _mundoNiebla;
 
@@ -162,42 +163,22 @@ namespace Vista
         private bool CeldaVisible(int x, int y) =>
             _gestor == null || _gestor.Controlador == null || _gestor.Controlador.EsVisible(x, y);
 
-        // Capa oscura sobre lo oculto: se construye una vez por mundo (una
-        // décima de segundo) y por frame solo se apagan las celdas reveladas.
+        // Capa oscura sobre lo oculto: se tiñe la rejilla (sin objetos nuevos)
+        // y por frame solo cambian las celdas recién reveladas.
         private void SincronizarNiebla()
         {
             if (!NieblaActiva())
             {
-                if (_niebla.Count > 0)
-                {
-                    foreach (SpriteRenderer sr in _niebla)
-                        if (sr != null) Destroy(sr.gameObject);
-                    _niebla.Clear();
-                    _nieblaVista = null;
-                }
+                if (_nieblaVista != null) { RestaurarRejilla(); _nieblaVista = null; }
                 _mundoNiebla = null;
                 return;
             }
             object mundo = _gestor.Controlador;
-            if (!ReferenceEquals(_mundoNiebla, mundo) || _niebla.Count != Mapa.Ancho * Mapa.Alto)
+            int n = Mapa.Ancho * Mapa.Alto;
+            if (!ReferenceEquals(_mundoNiebla, mundo) || _nieblaVista == null || _nieblaVista.Length != n)
             {
-                foreach (SpriteRenderer sr in _niebla)
-                    if (sr != null) Destroy(sr.gameObject);
-                _niebla.Clear();
                 _nieblaVista = new bool[Mapa.Ancho, Mapa.Alto];
-                for (int y = 0; y < Mapa.Alto; y++)
-                    for (int x = 0; x < Mapa.Ancho; x++)
-                    {
-                        var go = new GameObject($"Niebla_{x}_{y}", typeof(SpriteRenderer));
-                        go.transform.SetParent(transform, false);
-                        go.transform.position = PosMundo(x, y);
-                        var sr = go.GetComponent<SpriteRenderer>();
-                        sr.sprite = spriteTile != null ? spriteTile : ObtenerSpriteBlanco();
-                        sr.color = new Color(0.02f, 0.02f, 0.05f, 0.80f);
-                        sr.sortingOrder = 20;
-                        sr.transform.localScale = Vector3.one * tamanoCasilla;
-                        _niebla.Add(sr);
-                    }
+                RestaurarRejilla();
                 _mundoNiebla = mundo;
             }
             var ctrl = _gestor.Controlador;
@@ -207,8 +188,16 @@ namespace Vista
                     bool vis = ctrl.EsVisible(x, y);
                     if (vis == _nieblaVista[x, y]) continue;
                     _nieblaVista[x, y] = vis;
-                    _niebla[y * Mapa.Ancho + x].gameObject.SetActive(!vis);
+                    int idx = y * Mapa.Ancho + x;
+                    if (idx >= 0 && idx < _rejilla.Count && idx < _rejillaBase.Count)
+                        _rejilla[idx].color = vis ? _rejillaBase[idx] : ColorNiebla;
                 }
+        }
+
+        private void RestaurarRejilla()
+        {
+            for (int i = 0; i < _rejilla.Count && i < _rejillaBase.Count; i++)
+                _rejilla[i].color = _rejillaBase[i];
         }
 
         public void Actualizar(InstantaneaJuego foto)
@@ -413,6 +402,7 @@ namespace Vista
                     sr.sortingOrder = 0;
                     sr.transform.localScale = Vector3.one * tamanoCasilla;
                     _rejilla.Add(sr);
+                    _rejillaBase.Add(c);
                 }
             }
         }

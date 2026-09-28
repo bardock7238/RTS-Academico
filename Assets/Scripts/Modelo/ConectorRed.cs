@@ -45,6 +45,16 @@ namespace Modelo
 
         public bool HayMensajes => !_recibidos.IsEmpty;
 
+        // Latido (PING/PONG) y detección de tubo muerto: marcas de tiempo del
+        // último mensaje enviado/recibido. El juego las usa para PINGuear en
+        // silencio y cortar tubos callados (reconexión sola, sin reiniciar).
+        private long _ticksRecibido = DateTime.UtcNow.Ticks;
+        private long _ticksEnviado = DateTime.UtcNow.Ticks;
+        public DateTime UltimoRecibido => new DateTime(Interlocked.Read(ref _ticksRecibido));
+        public DateTime UltimoEnviado => new DateTime(Interlocked.Read(ref _ticksEnviado));
+        private void MarcarRecibido() => Interlocked.Exchange(ref _ticksRecibido, DateTime.UtcNow.Ticks);
+        private void MarcarEnviado() => Interlocked.Exchange(ref _ticksEnviado, DateTime.UtcNow.Ticks);
+
         // MODO SERVIDOR (host): abro la casilla y espero 1 jugador
 
         public bool IniciarHost(int puerto)
@@ -132,6 +142,8 @@ namespace Modelo
             // Sin Nagle: los mensajes del juego son pequeños y frecuentes;
             // agruparlos metería hasta ~200 ms de lag al espejo del rival.
             cliente.NoDelay = true;
+            MarcarRecibido();
+            MarcarEnviado();
             _conexion = cliente;
             NetworkStream flujo = cliente.GetStream();
             _escritor = new StreamWriter(flujo, Encoding.UTF8) { AutoFlush = true };
@@ -151,6 +163,7 @@ namespace Modelo
                     string linea = _lector.ReadLine();
                     if (linea == null) break; // El otro cerró el tubo.
                     _recibidos.Enqueue(linea);
+                    MarcarRecibido();
                 }
             }
             catch (IOException)
@@ -184,6 +197,7 @@ namespace Modelo
                 try
                 {
                     _escritor.WriteLine(mensaje);
+                    MarcarEnviado();
                     return true;
                 }
                 catch (IOException ex)

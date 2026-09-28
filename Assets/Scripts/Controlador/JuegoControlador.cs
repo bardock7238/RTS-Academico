@@ -353,8 +353,7 @@ namespace Controlador
             }
 
             int procesados = 0;
-            while (RedPartida.HayMensajes && procesados < 500)
-            {
+            while (RedPartida.HayMensajes && procesados < 500)            {
                 string mensaje = RedPartida.RecibirMensaje();
                 if (mensaje == null) break;
                 try
@@ -380,6 +379,24 @@ namespace Controlador
                 _ganadorAnunciado = ganador;
                 EnviarPorRed($"FIN;{ganador}");
             }
+
+            // [Red] Latido anti-tubo-muerto: el WiFi a veces deja la conexión
+            // a medias (sin FIN): todo callado y el espejo congelado. Si el
+            // tubo lleva 3 s sin enviar, PING silencioso; si lleva 15 s sin
+            // recibir NADA, se corta y el hilo reconecta solo (o el menú a
+            // los 5 s si no vuelve). Requiere el juego actualizado en ambos.
+            if (RedPartida.EstaConectado)
+            {
+                DateTime ahora = DateTime.UtcNow;
+                if ((ahora - RedPartida.UltimoEnviado).TotalSeconds > 3)
+                    EnviarPorRed("PING");
+                if ((ahora - RedPartida.UltimoRecibido).TotalSeconds > 15)
+                {
+                    GestorArchivos.RegistrarAccion("Sistema", "Red",
+                        "Tubo callado 15 s: cortando para reconectar.");
+                    RedPartida.CortarConexion();
+                }
+            }
             return procesados;
         }
 
@@ -393,6 +410,7 @@ namespace Controlador
         // "ITEM;TipoItem;x;y"
         // "RECOGER_ITEM;TipoItem;x;y"
         // "FIN;ganador"
+        // "PING" / "PONG" (latido silencioso anti-tubo-muerto)
         //
         // Cada mensaje se traduce a un método "Espejo" del Modelo, que se encarga de
         // su candado y de mutar la copia rival. Aquí solo parseamos y llevamos cuenta.
@@ -409,7 +427,9 @@ namespace Controlador
             { "RECOLECTAR", 4 },
             { "ITEM", 4 },
             { "RECOGER_ITEM", 4 },
-            { "FIN", 2 }
+            { "FIN", 2 },
+            { "PING", 1 },
+            { "PONG", 1 }
         };
 
         // [Concurrencia] El guard del FIN anunciado: evita el rebote infinito si las
@@ -435,6 +455,13 @@ namespace Controlador
                     GestorArchivos.RegistrarAccion(JugadorEnemigo.Nombre, "Red",
                         $"Rival conectado: {p[1]}");
                     break;
+
+                case "PING":
+                    EnviarPorRed("PONG"); // latido: se responde sin loguear
+                    break;
+
+                case "PONG":
+                    break; // latido: basta con haberlo recibido
 
                 case "MOVER":
                 {
