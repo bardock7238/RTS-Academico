@@ -8,6 +8,7 @@
 //   Unity.exe -batchmode -projectPath <repo> -executeMethod PruebasBatch.Todo -logFile - -quit
 using System;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using Controlador;
 using Modelo;
@@ -274,8 +275,8 @@ public static class PruebasBatch
         bool todosMovieron = true;
         for (int i = 0; i < soldados.Count; i++)
         {
-            int nuevoX = Math.Min(soldados[i].PosicionX + 2, ctrl.Motor.Tablero.Ancho - 1);
-            int nuevoY = Math.Min(soldados[i].PosicionY + 2, ctrl.Motor.Tablero.Alto - 1);
+            int nuevoX = Math.Min(soldados[i].PosicionX + 2, Mapa.Ancho - 1);
+            int nuevoY = Math.Min(soldados[i].PosicionY + 2, Mapa.Alto - 1);
             if (!ctrl.Motor.MoverUnidad(soldados[i], nuevoX, nuevoY))
                 todosMovieron = false;
         }
@@ -288,8 +289,8 @@ public static class PruebasBatch
         // Verificar posiciones válidas
         foreach (var s in soldados)
         {
-            if (s.PosicionX < 0 || s.PosicionX >= ctrl.Motor.Tablero.Ancho ||
-                s.PosicionY < 0 || s.PosicionY >= ctrl.Motor.Tablero.Alto)
+            if (s.PosicionX < 0 || s.PosicionX >= Mapa.Ancho ||
+                s.PosicionY < 0 || s.PosicionY >= Mapa.Alto)
                 Fallo($"unidad {s.Tipo} fuera de límites ({s.PosicionX},{s.PosicionY})");
         }
 
