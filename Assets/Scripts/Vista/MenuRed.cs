@@ -67,6 +67,13 @@ namespace Vista
             _esperando = true;
         }
 
+        // Copia tu IP al portapapeles para pasarla al rival (sin dictarla).
+        public void CopiarIp()
+        {
+            GUIUtility.systemCopyBuffer = ConectorRed.ObtenerIpLocal();
+            PonerEstado($"IP copiada: {ConectorRed.ObtenerIpLocal()} (pásala al rival)");
+        }
+
         private void Update()
         {
             if (!_esperando || _gestor == null || _gestor.Controlador == null) return;
@@ -122,27 +129,29 @@ namespace Vista
             titulo.alignment = TextAnchor.MiddleCenter;
             titulo.color = new Color(1f, 0.85f, 0.4f, 1f);
 
-            var subt = UiFabrica.TextoCaja(caja.transform, "Subtitulo", "2 PCs en la misma red · puerto 5505",
-                new Vector2(0.5f, 0.5f), new Vector2(440, 24), new Vector2(0, 108), 14);
+            var subt = UiFabrica.TextoCaja(caja.transform, "Subtitulo", "2 PCs en la misma red · puerto 5505\nSi no conecta: abre el 5505 en el firewall del host",
+                new Vector2(0.5f, 0.5f), new Vector2(440, 40), new Vector2(0, 104), 13);
             subt.alignment = TextAnchor.MiddleCenter;
             subt.color = new Color(0.8f, 0.85f, 0.8f, 1f);
 
             var lblIp = UiFabrica.TextoCaja(caja.transform, "LblIp", "IP DEL HOST",
-                new Vector2(0.5f, 0.5f), new Vector2(440, 22), new Vector2(0, 78), 14);
+                new Vector2(0.5f, 0.5f), new Vector2(440, 22), new Vector2(0, 66), 14);
             lblIp.alignment = TextAnchor.MiddleCenter;
             lblIp.color = new Color(0.8f, 0.85f, 0.8f, 1f);
 
-            _inputIp = CrearCampoIp(caja.transform, new Vector2(0, 36));
+            _inputIp = CrearCampoIp(caja.transform, new Vector2(0, 24));
 
             UiFabrica.Boton(caja.transform, "HOSPEDAR", ElegirHospedar,
-                new Vector2(0.5f, 0.5f), new Vector2(210, 40), new Vector2(-110, -14), 16, "verde");
+                new Vector2(0.5f, 0.5f), new Vector2(210, 40), new Vector2(-110, -26), 16, "verde");
             UiFabrica.Boton(caja.transform, "CONECTAR", ElegirConectar,
-                new Vector2(0.5f, 0.5f), new Vector2(210, 40), new Vector2(110, -14), 16, "azul");
+                new Vector2(0.5f, 0.5f), new Vector2(210, 40), new Vector2(110, -26), 16, "azul");
             UiFabrica.Boton(caja.transform, "VOLVER", Volver,
-                new Vector2(0.5f, 0.5f), new Vector2(360, 40), new Vector2(0, -62), 16, "rojo");
+                new Vector2(0.5f, 0.5f), new Vector2(210, 40), new Vector2(-110, -72), 16, "rojo");
+            UiFabrica.Boton(caja.transform, "COPIAR MI IP", CopiarIp,
+                new Vector2(0.5f, 0.5f), new Vector2(210, 40), new Vector2(110, -72), 16, "azul");
 
             _txtEstado = UiFabrica.TextoCaja(caja.transform, "Estado", "",
-                new Vector2(0.5f, 0.5f), new Vector2(440, 60), new Vector2(0, -122), 13);
+                new Vector2(0.5f, 0.5f), new Vector2(440, 60), new Vector2(0, -132), 13);
             _txtEstado.alignment = TextAnchor.MiddleCenter;
             _txtEstado.color = new Color(1f, 0.85f, 0.4f, 1f);
         }
