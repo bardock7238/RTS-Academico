@@ -68,6 +68,14 @@ namespace Vista
             Cerrar();
         }
 
+        // Abre el menú de red (2 PCs): cierra este y muestra el de conexión.
+        public void AbrirRed()
+        {
+            if (_gestor == null) return;
+            Cerrar();
+            _gestor.MenuRed?.Mostrar();
+        }
+
         public void ElegirBases(int n)
         {
             _bases = Mathf.Clamp(n, 1, 5);
@@ -234,10 +242,12 @@ namespace Vista
 
             UiFabrica.Boton(caja.transform, "¡JUGAR!", Jugar,
                 new Vector2(0.5f, 0.5f), new Vector2(360, 44), new Vector2(0, 22), 18, "verde");
+            UiFabrica.Boton(caja.transform, "JUGAR EN RED", AbrirRed,
+                new Vector2(0.5f, 0.5f), new Vector2(360, 40), new Vector2(0, -24), 16, "azul");
             UiFabrica.Boton(caja.transform, "COMO JUGAR", AlternarAyuda,
-                new Vector2(0.5f, 0.5f), new Vector2(360, 44), new Vector2(0, -28));
+                new Vector2(0.5f, 0.5f), new Vector2(360, 44), new Vector2(0, -70));
             UiFabrica.Boton(caja.transform, "SALIR", ElegirSalir,
-                new Vector2(0.5f, 0.5f), new Vector2(360, 44), new Vector2(0, -78), 16, "rojo");
+                new Vector2(0.5f, 0.5f), new Vector2(360, 44), new Vector2(0, -120), 16, "rojo");
 
             _ayudaGo = new GameObject("Ayuda", typeof(RectTransform));
             _ayudaGo.transform.SetParent(caja.transform, false);
@@ -246,7 +256,7 @@ namespace Vista
             art.anchorMax = new Vector2(0.5f, 0.5f);
             art.pivot = new Vector2(0.5f, 0.5f);
             art.sizeDelta = new Vector2(440, 110);
-            art.anchoredPosition = new Vector2(0, -155);
+            art.anchoredPosition = new Vector2(0, -195);
             _txtAyuda = UiFabrica.TextoCaja(_ayudaGo.transform, "TxtAyuda",
                 "Izq: seleccionar/ordenar · Der: añadir a grupo · Arrastrar: varias · Minimapa: clic mueve cámara\n" +
                 "QWER entrenar · 1-4 construir (Esc cancela) · C recoger (x2=cercano) · I item · T mercado · Y mejoras\n" +

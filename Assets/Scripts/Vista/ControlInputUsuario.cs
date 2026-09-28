@@ -340,7 +340,12 @@ namespace Vista
             {
                 // Con el menú inicial abierto hay que elegir modo: Esc no hace nada.
                 if (_gestor.MenuInicio != null && _gestor.MenuInicio.Abierto) return;
-                // Con mercado/herrería abiertos, Esc los cierra y listo.
+                // Con el menú de red abierto, Esc vuelve al inicio.
+                if (_gestor.MenuRed != null && _gestor.MenuRed.Abierto)
+                {
+                    _gestor.MenuRed.Volver();
+                    return;
+                }                // Con mercado/herrería abiertos, Esc los cierra y listo.
                 if (_gestor.MenuMercado != null && _gestor.MenuMercado.Abierto)
                 {
                     _gestor.MenuMercado.Cerrar();

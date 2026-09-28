@@ -21,6 +21,7 @@ namespace Vista
         [SerializeField] private ControlInputUsuario controlInput;
         [SerializeField] private PanelFinPartida panelFin;
         [SerializeField] private MenuInicio menuInicio;
+        [SerializeField] private MenuRed menuRed;
         [SerializeField] private MenuMercado menuMercado;
         [SerializeField] private MenuMejoras menuMejoras;
 
@@ -28,6 +29,7 @@ namespace Vista
         public InstantaneaJuego UltimaFoto { get; private set; }
         public VistaTablero VistaTablero => vistaTablero;
         public MenuInicio MenuInicio => menuInicio;
+        public MenuRed MenuRed => menuRed;
         public MenuMercado MenuMercado => menuMercado;
         public MenuMejoras MenuMejoras => menuMejoras;
 
@@ -71,7 +73,7 @@ namespace Vista
             if (controlInput == null) controlInput = GetComponent<ControlInputUsuario>();
             if (panelFin == null) panelFin = GetComponentInChildren<PanelFinPartida>(true);
             if (menuInicio == null) menuInicio = GetComponentInChildren<MenuInicio>(true);
-
+            if (menuRed == null) menuRed = GetComponentInChildren<MenuRed>(true);
             vistaTablero?.Inicializar(this);
             hudRecursos?.Inicializar(this);
             controlInput?.Inicializar(this);
@@ -195,6 +197,29 @@ namespace Vista
             MostrarMensaje(string.IsNullOrEmpty(nombres) ? "¡A la guerra!" : $"Te enfrentas a: {nombres}", 5f);
         }
 
+        // Arranca una partida EN RED (2 PCs, sin IA): el host juega arriba y
+        // el cliente abajo, con el mismo mundo espejado por TCP (puerto 5505).
+        public void IniciarPartidaRed(bool esHost, string ip)
+        {
+            Controlador?.Detener();
+            Controlador = new JuegoControlador(nombreJugador, esHost, 1, false, false);
+            _sonBajas = -1; // el mundo nuevo sincroniza el sonido sin sonar
+            if (esHost)
+            {
+                if (Controlador.HospedarRed())
+                    MostrarMensaje($"Hospedando en {ConectorRed.ObtenerIpLocal()}:5505... (pásale esa IP al rival)", 8f);
+                else
+                    AccionRechazada("red: no se pudo hospedar (¿puerto 5505 ocupado?)");
+            }
+            else
+            {
+                if (Controlador.ConectarRed(ip))
+                    MostrarMensaje($"Conectado a {ip}:5505, esperando saludo...", 8f);
+                else
+                    AccionRechazada($"red: no se pudo conectar a {ip}:5505");
+            }
+        }
+
         // Si la escena no trae HUD (bootstrap mínimo), la Vista crea su propia UI
         // por código. El compañero puede reemplazarla jerarquizando la escena (issue #4).
         private void ConstruirUiSiFalta()
@@ -284,6 +309,14 @@ namespace Vista
                 menuMejoras = mejGo.AddComponent<MenuMejoras>();
             }
             menuMejoras.Inicializar(this);
+
+            if (menuRed == null)
+            {
+                var redGo = new GameObject("MenuRed", typeof(RectTransform));
+                redGo.transform.SetParent(canvasGo.transform, false);
+                menuRed = redGo.AddComponent<MenuRed>();
+            }
+            menuRed.Inicializar(this);
 
             var miniGo = new GameObject("Minimap", typeof(RectTransform));
             miniGo.transform.SetParent(canvasGo.transform, false);
