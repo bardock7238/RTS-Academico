@@ -32,6 +32,8 @@ public static class PruebasBatch
             ProbarPveSinRed();
             ProbarPvpHostCliente();
             ProbarArteDescargado();
+            ProbarAtaqueYVictoria();
+            ProbarConcurrencia();
         }
         catch (Exception ex)
         {
@@ -150,6 +152,150 @@ public static class PruebasBatch
 
         cliente.Detener();
         host.Detener();
+    }
+
+    // PRUEBAS DE ATAQUE Y CONDICIÓN DE VICTORIA
+    // Verifica que:
+    //   1. Una unidad puede atacar a otra y causar daño
+    //   2. Al destruir todas las unidades enemigas, se declara ganador
+    //   3. Al destruir el Centro Urbano enemigo, se declara ganador
+    private static void ProbarAtaqueYVictoria()
+    {
+        int fallosAntes = _fallos;
+        GestorArchivos.CarpetaDestino = Path.GetTempPath();
+        var ctrl = new JuegoControlador("AtaqueBatch", true);
+
+        // --- Prueba 1: Ataque entre unidades ---
+        var unidadLocal = ctrl.JugadorLocal.Unidades.FirstOrDefault(u => u.Tipo == TipoUnidad.Soldado)
+                      ?? ctrl.JugadorLocal.Unidades.FirstOrDefault();
+        var unidadEnemiga = ctrl.JugadorEnemigo.Unidades.FirstOrDefault();
+
+        if (unidadLocal == null) Fallo("no hay unidad local para atacar");
+        else if (unidadEnemiga == null) Fallo("no hay unidad enemiga para ser atacada");
+        else
+        {
+            // Mover unidad local cerca del enemigo para que esté en rango
+            unidadLocal.PosicionX = unidadEnemiga.PosicionX;
+            unidadLocal.PosicionY = unidadEnemiga.PosicionY + 1;
+
+            int vidaEnemigaAntes = unidadEnemiga.Vida;
+            bool ataqueOk = ctrl.Motor.Atacar(unidadLocal, unidadEnemiga);
+
+            if (!ataqueOk) Fallo("Atacar() devolvió false con unidades en rango");
+            else if (unidadEnemiga.Vida >= vidaEnemigaAntes && unidadEnemiga.EstaViva)
+                Fallo($"el ataque no causó daño (vida {vidaEnemigaAntes}→{unidadEnemiga.Vida})");
+            else
+                Ok($"ataque entre unidades: {unidadLocal.Tipo} infligió daño a {unidadEnemiga.Tipo} (vida {vidaEnemigaAntes}→{unidadEnemiga.Vida})");
+        }
+
+        // --- Prueba 2: Destruir todas las unidades enemigas → victoria por aniquilación ---
+        // (Usar un controlador fresco para no contaminar la prueba anterior)
+        var ctrl2 = new JuegoControlador("VictoriaBatch", true);
+        foreach (var u in ctrl2.JugadorEnemigo.Unidades.ToList())
+            ctrl2.Motor.Atacar(ctrl2.JugadorLocal.Unidades.FirstOrDefault(), u);
+
+        // Forzar destrucción de todas las unidades enemigas
+        foreach (var u in ctrl2.JugadorEnemigo.Unidades.ToList())
+            u.RecibirGolpe(9999);
+
+        ctrl2.Motor.VerificarGanador();
+
+        if (ctrl2.EstadoPartida.GanadorNombre == null)
+            Fallo("no se declaró ganador al destruir todas las unidades enemigas");
+        else
+            Ok($"victoria por aniquilación: ganador = {ctrl2.EstadoPartida.GanadorNombre}");
+
+        // --- Prueba 3: Destruir Centro Urbano enemigo → victoria ---
+        var ctrl3 = new JuegoControlador("CentroBatch", true);
+        var centroEnemigo = ctrl3.JugadorEnemigo.Edificios.FirstOrDefault(
+            e => e.Tipo == TipoEdificio.CentroUrbano && e.EstaViva);
+
+        if (centroEnemigo == null) Fallo("no hay Centro Urbano enemigo para destruir");
+        else
+        {
+            centroEnemigo.RecibirDano(9999);
+            ctrl3.Motor.VerificarGanador();
+
+            if (ctrl3.EstadoPartida.GanadorNombre == null)
+                Fallo("no se declaró ganador al destruir el Centro Urbano enemigo");
+            else
+                Ok($"victoria por destrucción de Centro Urbano: ganador = {ctrl3.EstadoPartida.GanadorNombre}");
+        }
+
+        ctrl.Detener();
+        ctrl2.Detener();
+        ctrl3.Detener();
+        if (_fallos == fallosAntes)
+            Ok("ataque y victoria: ataque, aniquilación y destrucción de Centro funcionan correctamente");
+    }
+
+    // PRUEBAS DE CONCURRENCIA
+    // Verifica que múltiples Tasks pueden ejecutarse sin condiciones de carrera
+    private static void ProbarConcurrencia()
+    {
+        int fallosAntes = _fallos;
+        GestorArchivos.CarpetaDestino = Path.GetTempPath();
+        var ctrl = new JuegoControlador("ConcurrenciaBatch", true);
+
+        // --- Prueba 1: Múltiples recolecciones simultáneas ---
+        var aldeanos = ctrl.JugadorLocal.Unidades.Where(u => u.EsRecolector).Take(3).ToList();
+        if (aldeanos.Count == 0) { Fallo("no hay aldeanos para prueba de concurrencia"); ctrl.Detener(); return; }
+
+        var recursos = ctrl.Motor.Tablero.RecursosEnMapa.ToList();
+        if (recursos.Count == 0) { Fallo("no hay recursos en el mapa"); ctrl.Detener(); return; }
+
+        // Iniciar recolección de varios aldeanos a la vez
+        bool todasIniciaron = true;
+        for (int i = 0; i < aldeanos.Count; i++)
+        {
+            var recurso = recursos[i % recursos.Count];
+            if (!ctrl.Motor.IniciarRecoleccion(aldeanos[i], recurso))
+                todasIniciaron = false;
+        }
+
+        if (!todasIniciaron) Fallo("no todas las recolecciones iniciaron correctamente");
+
+        // Esperar un poco para que las Tasks de recolección avancen
+        Thread.Sleep(500);
+
+        // Verificar que no hay excepciones ni estados inconsistentes
+        var foto = ctrl.Instantanea();
+        if (foto == null) Fallo("Instantanea() devolvió null durante concurrencia");
+        else
+        {
+            // Verificar que los recursos del jugador local son válidos
+            if (foto.Oro < 0 || foto.Comida < 0 || foto.Madera < 0 ||
+                foto.Piedra < 0 || foto.Hierro < 0)
+                Fallo("recursos negativos detectados (condición de carrera)");
+        }
+
+        // --- Prueba 2: Múltiples movimientos simultáneos ---
+        var soldados = ctrl.JugadorLocal.Unidades.Where(u => u.PuedeAtacar).Take(5).ToList();
+        bool todosMovieron = true;
+        for (int i = 0; i < soldados.Count; i++)
+        {
+            int nuevoX = Math.Min(soldados[i].PosicionX + 2, ctrl.Motor.Tablero.Ancho - 1);
+            int nuevoY = Math.Min(soldados[i].PosicionY + 2, ctrl.Motor.Tablero.Alto - 1);
+            if (!ctrl.Motor.MoverUnidad(soldados[i], nuevoX, nuevoY))
+                todosMovieron = false;
+        }
+
+        if (!todosMovieron) Fallo("no todas las órdenes de movimiento se aceptaron");
+
+        // Esperar a que pathfinding termine
+        Thread.Sleep(300);
+
+        // Verificar posiciones válidas
+        foreach (var s in soldados)
+        {
+            if (s.PosicionX < 0 || s.PosicionX >= ctrl.Motor.Tablero.Ancho ||
+                s.PosicionY < 0 || s.PosicionY >= ctrl.Motor.Tablero.Alto)
+                Fallo($"unidad {s.Tipo} fuera de límites ({s.PosicionX},{s.PosicionY})");
+        }
+
+        ctrl.Detener();
+        if (_fallos == fallosAntes)
+            Ok("concurrencia: recolección y movimiento simultáneos sin condiciones de carrera");
     }
 
     private static void Ok(string msg) => Debug.Log("[PRUEBAS_BATCH] OK: " + msg);

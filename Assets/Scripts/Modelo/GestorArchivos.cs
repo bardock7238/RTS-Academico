@@ -106,15 +106,19 @@ namespace Modelo
             });
         }
 
-        // En RTS en tiempo real no hay turnos: cada entrada registra la hora real
-        // y qué jugador hizo la acción, así ningún hilo se pisa al escribir.
+        // [Formato de la guía] Cada entrada del log sigue el formato exacto:
+        //   Turno: Jugador 1
+        //   Acción: Ataque
+        //   Resultado: Impacto - Unidad enemiga destruida
+        // En RTS en tiempo real no hay turnos numerados: se usa el nombre del
+        // jugador como "Turno" y se añade la hora real para auditoría.
         public static void RegistrarAccion(string jugador, string accion, string resultado)
         {
             string entrada =
-                $"Tiempo: {DateTime.Now:HH:mm:ss}{Environment.NewLine}" +
-                $"Jugador: {jugador}{Environment.NewLine}" +
+                $"Turno: {jugador}{Environment.NewLine}" +
                 $"Acción: {accion}{Environment.NewLine}" +
-                $"Resultado: {resultado}{Environment.NewLine}{Environment.NewLine}";
+                $"Resultado: {resultado}{Environment.NewLine}" +
+                $"Hora: {DateTime.Now:HH:mm:ss}{Environment.NewLine}{Environment.NewLine}";
 
             _cola.Add(new Entrada { Destino = DestinoLog, Contenido = entrada });
         }
