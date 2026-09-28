@@ -338,18 +338,22 @@ namespace Controlador
             // [Concurrencia] SALIDA: lo que el Modelo encoló (ataque, entrenamiento
             // terminado, item, recoleccion...) se envía SOLO si el tubo está vivo.
             // Si el rival está desconectado, se quedan en cola y salen al reconectar.
+            // Tope por frame: una ráfaga (WiFi con jitter) se drena en varios
+            // frames en vez de congelar uno solo.
             if (RedPartida.EstaConectado)
             {
-                while (Motor.HaySalientes)
+                int enviados = 0;
+                while (Motor.HaySalientes && enviados < 500)
                 {
                     string saliente = Motor.SiguienteSaliente();
                     if (saliente == null) break;
                     EnviarPorRed(saliente);
+                    enviados++;
                 }
             }
 
             int procesados = 0;
-            while (RedPartida.HayMensajes)
+            while (RedPartida.HayMensajes && procesados < 500)
             {
                 string mensaje = RedPartida.RecibirMensaje();
                 if (mensaje == null) break;
