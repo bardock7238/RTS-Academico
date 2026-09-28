@@ -129,6 +129,9 @@ namespace Modelo
 
         private void AbrirConexion(TcpClient cliente)
         {
+            // Sin Nagle: los mensajes del juego son pequeños y frecuentes;
+            // agruparlos metería hasta ~200 ms de lag al espejo del rival.
+            cliente.NoDelay = true;
             _conexion = cliente;
             NetworkStream flujo = cliente.GetStream();
             _escritor = new StreamWriter(flujo, Encoding.UTF8) { AutoFlush = true };
