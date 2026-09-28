@@ -44,12 +44,14 @@ namespace Modelo
     }
 
     // Ritmo de partida (elegido en el menú): ajusta la gracia militar y el
-    // daño de la IA. Rápida = guerra pronto; Larga = partida épica.
+    // daño de la IA. Rápida = guerra pronto; Larga = partida épica;
+    // SinGracia = la IA ataca desde el segundo 0 y sin handicap.
     public enum RitmoPartida
     {
         Rapida,
         Normal,
-        Larga
+        Larga,
+        SinGracia
     }
 
     // Estado en el que puede encontrarse una unidad.

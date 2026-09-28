@@ -164,7 +164,8 @@ Los yacimientos dentro de un bioma rinden **+50% por ciclo**.
 - Los **aldeanos se reponen solos**: al morir uno, el Centro entrena otro
   automáticamente (si hay hueco y fondos, hasta 4).
 - **Ritmo de partida** (menú): Rápida (60 s de paz, IA al 85%),
-  Normal (180 s, 60%) o Larga (7 min de paz, IA al 45%).
+  Normal (180 s, 60%), Larga (7 min de paz, IA al 45%) o Sin gracia
+  (guerra desde el segundo 0, IA al 100%).
 - **Inicio rico** (menú): +250 madera/comida, +150 oro, +50 hierro/piedra,
   2 aldeanos extra y una Casa operativa desde el minuto 0.
 - **Regicidio**: ganas al destruir la capital enemiga (su primer Centro,

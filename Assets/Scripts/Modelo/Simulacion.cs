@@ -347,7 +347,8 @@ namespace Modelo
 
         // Ritmo de partida: Rápida = guerra a los 60 s e IA al 85% de daño;
         // Normal = valores clásicos (180 s, 60%); Larga = 7 min de paz e IA
-        // al 45% para una partida épica. Se puede cambiar en caliente.
+        // al 45% para una partida épica; SinGracia = guerra desde el segundo
+        // 0 con la IA al 100%. Se puede cambiar en caliente.
         public void AplicarRitmo(RitmoPartida ritmo)
         {
             lock (Candado)
@@ -361,6 +362,10 @@ namespace Modelo
                     case RitmoPartida.Larga:
                         GraciaMilitarSegundos = 420;
                         FactorDanoIA = 0.45;
+                        break;
+                    case RitmoPartida.SinGracia:
+                        GraciaMilitarSegundos = 0;
+                        FactorDanoIA = 1.0;
                         break;
                     default:
                         GraciaMilitarSegundos = 180;

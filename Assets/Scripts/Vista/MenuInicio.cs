@@ -22,7 +22,7 @@ namespace Vista
         private bool _advE, _advY, _rico, _exploracion;
         private RitmoPartida _ritmo = RitmoPartida.Normal;
         private readonly Button[] _btnBases = new Button[5];
-        private readonly Button[] _btnRitmo = new Button[3];
+        private readonly Button[] _btnRitmo = new Button[4];
         private Button _btnAdvE, _btnAdvY, _btnRico, _btnModo;
         private Text _txtRivales;
 
@@ -98,7 +98,7 @@ namespace Vista
 
         public void ElegirRitmo(int r)
         {
-            _ritmo = (RitmoPartida)Mathf.Clamp(r, 0, 2);
+            _ritmo = (RitmoPartida)Mathf.Clamp(r, 0, 3);
             ActualizarOpciones();
         }
 
@@ -218,12 +218,12 @@ namespace Vista
                 new Vector2(0.5f, 0.5f), new Vector2(440, 22), new Vector2(0, 178), 14);
             lblRitmo.alignment = TextAnchor.MiddleCenter;
             lblRitmo.color = new Color(0.8f, 0.85f, 0.8f, 1f);
-            string[] ritmos = { "RÁPIDA", "NORMAL", "LARGA" };
-            for (int r = 0; r < 3; r++)
+            string[] ritmos = { "RÁPIDA", "NORMAL", "LARGA", "SIN GRACIA" };
+            for (int r = 0; r < 4; r++)
             {
                 int k = r;
                 _btnRitmo[r] = UiFabrica.Boton(caja.transform, ritmos[r], () => ElegirRitmo(k),
-                    new Vector2(0.5f, 0.5f), new Vector2(110, 34), new Vector2(-120 + k * 120, 148), 14);
+                    new Vector2(0.5f, 0.5f), new Vector2(100, 34), new Vector2(-157 + k * 105, 148), 12);
             }
 
             _btnAdvE = UiFabrica.Boton(caja.transform, "ENEMIGO AVANZADO: NO", AlternarAdvE,

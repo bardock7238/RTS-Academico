@@ -65,6 +65,7 @@ classDiagram
         Rapida
         Normal
         Larga
+        SinGracia
     }
 
     class Unidad {
