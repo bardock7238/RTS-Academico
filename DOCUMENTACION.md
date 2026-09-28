@@ -682,9 +682,10 @@ sequenceDiagram
     S-->>C: true (IAActiva)
     Note over IA: cada IntervaloDecisionMs (2000 ms)
     IA->>IA: DecidirUnaVez() — lee Instantanea() (copia)
-    IA->>S: MoverUnidadIA / IniciarRecoleccionIA
-    IA->>S: ConstruirEdificioIA (Cuartel si no tiene)
-    IA->>S: EntrenarUnidadIA (Soldado si presión < objetivo)
+    IA->>S: MoverARecolectarIA (aldeanos ociosos)
+    IA->>S: ConstruirEdificioIA (Cuartel, Casas x2, Torres x2)
+    IA->>S: EntrenarUnidadIA (4 soldados, 2 arqueros, 1 caballero)
+    IA->>S: MoverUnidadIA (reunión en gracia: mover sí, pegar no)
     S->>S: lock(Candado) en cada método *IA — misma regla que el jugador
     CG->>C: Instantanea() 1 vez/frame → pinta tropas de la IA
     Note over CG: Detener() en OnDestroy → _ia.Detener()

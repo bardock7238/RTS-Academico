@@ -54,17 +54,22 @@ También hay `COMO JUGAR` con los controles y `SALIR` para cerrar el juego.
 
 1. Abrir el proyecto en Unity 6000.6.0f1.
 2. Abrir la escena `Assets/Escenas/Juego.unity` y pulsar Play.
-3. En el menú inicial, pulsar **VS MAQUINA (PVE)**: ahí arranca el
-   Controlador y la IA enemiga (economía: recolección; militar: Cuartel +
-   Soldados). Sin elegir modo la partida no empieza.
+3. En el menú inicial configura el escenario (bases, ritmo, inicio rico,
+   modo guerra/exploración) y pulsa **¡JUGAR!**: ahí arranca el
+   Controlador y la IA enemiga (economía: recolección; construcción:
+   Cuartel, Casas y Torres; militar: ejército mixto de soldados,
+   arqueros y caballeros que se reúne en gracia). Sin elegir modo la
+   partida no empieza.
 
 ### Modo red (2 jugadores)
 
-1. Abrir el proyecto en Unity 6000.6.0f1.
+1. Abrir el proyecto en Unity 6000.6.0f1 (o un build en cada PC).
 2. Abrir la escena de juego desde `Assets/Escenas` y pulsar Play.
-3. Abrir el **menú provisional de red** con `M` (o el botón **Red [M]** del panel lateral):
-   - **Host · puerto 5505** (o tecla `H`) en un equipo;
-   - **Cliente** con la IP del host (o tecla `J` para `127.0.0.1`) en el otro.
+3. Abrir **JUGAR EN RED** en el menú principal:
+    - **HOSPEDAR** en un equipo (puerto 5505; muestra su IP);
+    - **CONECTAR** con esa IP en el otro (misma red WiFi/cable).
+4. Al conectar arranca solo (sin IA). Si un lado se cae 5 s, el otro
+   vuelve al menú.
 4. Los archivos `configuracion.txt`, `log_partida.txt` y `resultado_final.txt` se
    escriben en `Application.persistentDataPath` (`%USERPROFILE%\AppData\LocalLow\...`).
 
@@ -127,7 +132,8 @@ Desde el menú inicial eliges **bases enemigas (1–5)** repartidas por los
 bordes, y si arrancan **avanzadas** (con Cuartel y soldados) o básicas —
 igual para ti. Tú eres los **Griegos**; ellos: Romanos, Persas, Egipcios,
 Cartagineses y Babilonios, cada uno con su color. La IA enemiga **no ataca
-hasta el minuto 3** (se prepara); tú puedes atacar desde el segundo 0.
+durante la gracia** (60 s / 180 s / 7 min según el ritmo: reúne sus
+tropas); tú puedes atacar desde el segundo 0.
 
 ### Cámara
 

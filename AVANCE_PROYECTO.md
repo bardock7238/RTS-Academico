@@ -224,6 +224,7 @@ Se validó fuera de Unity (los scripts no usan `UnityEngine`), en proyectos temp
 - **Mapa 140×140** (misma simetría), **modo exploración** con niebla (tablero + minimapa) y capital aleatoria; **grupos 5-9**, **sonido procedural** (S/botón), facción visible e inspección.
 - **Red en menú** (`MenuRed` + `IniciarPartidaRed`, puerto 5505, `NoDelay`, vuelta al menú a los 5 s de caída).
 - **Verificación**: suites PVE 36 OK + red 8 OK, scratch 50+ checks, batch Unity `TODO OK` (salvo test de aniquilación del compañero, incompatible con regicidio: pendiente de equipo).
+- **IA completa**: Cuartel + 2 Casas + 2 Torres; ejército mixto (4 soldados, 2 arqueros, 1 caballero); reunión de tropas en gracia.
 
 ---
 

@@ -159,7 +159,7 @@ PanelFinPartida, MenuRed      · CERO Task/Thread/lock     · ConectorRed (Threa
 - **Movimiento**: destino + **BFS 4 direcciones**, 1 casilla/100 ms, sin teletransporte; **unidades apilables** (solo edificios bloquean)
 - **Combate**: ataque en rango + **aproximación** (clic → camina hasta pegar); daño `max(0, atq−def)`
 - **Items concurrentes**: Yogur (cura), Casco (+defensa temporal), Espada (+ataque), Herramientas (+5% recolección)
-- **PVE**: IA económica + militar (persigue, **asedia tu Centro** si no hay tropas cerca)
+- **PVE**: IA económica + militar (Cuartel, Casas, Torres; ejército mixto soldados/arqueros/caballeros; reunión en gracia; persigue y **asedia tu Centro** si no hay tropas cerca)
 - **Victoria (regicidio)**: cae la capital enemiga (anillo dorado) → ganas aunque queden tropas; pierdes si cae tu Centro o tu ejército
 - **Red P2P TCP** (extra): puerto **5505**, protocolo `;` — `SALUDO`, `MOVER`, `ATACAR`, `CONSTRUIR`, `ENTRENAR`, `RECOLECTAR`, `ITEM`, `RECOGER_ITEM`, `FIN`, `PING/PONG` · espejo *“quien actúa, avisa”* · reconexión automática · `NoDelay` anti-lag · modal **JUGAR EN RED** (hospedar/conectar) · si el rival se cae 5 s, vuelta al menú
 

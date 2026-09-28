@@ -8,8 +8,9 @@ namespace Modelo
     //
     //  Cada IntervaloDecisionMs decide y actúa sobre JugadorEnemigo:
     //    1. Economía: manda a sus aldeanos a recolectar el yacimiento más cercano.
-    //    2. Construcción: Casa/Cuartel cerca de su Centro Urbano (si hay recursos).
-    //    3. Militar: entrena Soldados cuando el Cuartel está operativo.
+    //    2. Construcción: Cuartel, Casas (comida pasiva) y Torres (defensa).
+    //    3. Militar: ejército mixto (soldados, arqueros, caballeros).
+    //    4. Reunión: en gracia mueve sus tropas al punto de reunión (sin pegar).
     //
     //  Las tropas militares que entrena quedan con ControladaPorIA=true y las
     //  mueve/ hace pelear el bucle de simulación de Simulacion (Nivel 1, lock).
@@ -25,8 +26,10 @@ namespace Modelo
         // Cada cuántos ms la IA reevalúa su economía/militar (1000 = cada segundo).
         public int IntervaloDecisionMs { get; set; } = 2000;
 
-        // Cuántos soldados quiere tener antes de dejar de entrenar (presión razonable).
-        public int PresionMilitarObjetivo { get; set; } = 4;
+        // Ejército objetivo por tipo (presión razonable y mixta).
+        public int SoldadosObjetivo { get; set; } = 4;
+        public int ArquerosObjetivo { get; set; } = 2;
+        public int CaballerosObjetivo { get; set; } = 1;
 
         public bool Activa => _activa;
         public int DecisionesEjecutadas { get; private set; }
@@ -91,11 +94,14 @@ namespace Modelo
             // 1) Economía: aldeanos ociosos → yacimiento adyacente o el más cercano.
             GestionarRecoleccion();
 
-            // 2) Construcción: si aún no tiene Cuartel, intenta construirlo (y Casa si le sobra).
+            // 2) Construcción: Cuartel, Casas y Torres (en ese orden de prisa).
             GestionarConstruccion();
 
-            // 3) Militar: si hay Cuartel operativo y presión militar insuficiente, entrenar.
+            // 3) Militar: ejército mixto según objetivos por tipo.
             GestionarEntrenamiento();
+
+            // 4) Reunión: en gracia, las tropas se concentran (mover sí, pegar no).
+            GestionarReunion();
         }
 
         private void GestionarRecoleccion()
@@ -165,6 +171,7 @@ namespace Modelo
             var foto = _mundo.Instantanea();
             bool tieneCuartel = false;
             bool construyendoCuartel = false;
+            int casas = 0, torres = 0;
             Edificio centro = null;
 
             foreach (Edificio e in foto.EdificiosEnemigo)
@@ -175,17 +182,37 @@ namespace Modelo
                     if (e.Estado == EstadoEdificio.Operativo) tieneCuartel = true;
                     else construyendoCuartel = true;
                 }
+                if (e.Tipo == TipoEdificio.Casa && e.EstaViva) casas++;
+                if (e.Tipo == TipoEdificio.Torre && e.EstaViva) torres++;
             }
             if (centro == null) return; // sin centro no puede expandirse con sentido
 
-            if (tieneCuartel || construyendoCuartel) return;
-
-            // Buscar casilla libre cerca del centro para el Cuartel.
-            (int X, int Y)? hueco = BuscarCasillaEdificableCerca(centro.PosicionX, centro.PosicionY, radioMax: 5);
-            if (!hueco.HasValue) return;
-
-            // ConstruirEdificioIA gasta y revalida; si no alcanzan los recursos devuelve false.
-            _mundo.ConstruirEdificioIA(TipoEdificio.Cuartel, hueco.Value.X, hueco.Value.Y);
+            // Orden de prisa: Cuartel → Casa → Torres (máx 2 y 2). ConstruirEdificioIA
+            // gasta y revalida; si no alcanzan los recursos devuelve false y se
+            // reintenta en la próxima decisión.
+            if (!tieneCuartel && !construyendoCuartel)
+            {
+                (int X, int Y)? hueco = BuscarCasillaEdificableCerca(
+                    centro.PosicionX, centro.PosicionY, radioMax: 5, TipoEdificio.Cuartel);
+                if (hueco.HasValue)
+                    _mundo.ConstruirEdificioIA(TipoEdificio.Cuartel, hueco.Value.X, hueco.Value.Y);
+                return; // el Cuartel primero; lo demás espera
+            }
+            if (casas < 2)
+            {
+                (int X, int Y)? hueco = BuscarCasillaEdificableCerca(
+                    centro.PosicionX, centro.PosicionY, radioMax: 6, TipoEdificio.Casa);
+                if (hueco.HasValue
+                    && _mundo.ConstruirEdificioIA(TipoEdificio.Casa, hueco.Value.X, hueco.Value.Y))
+                    return;
+            }
+            if (tieneCuartel && torres < 2)
+            {
+                (int X, int Y)? hueco = BuscarCasillaEdificableCerca(
+                    centro.PosicionX, centro.PosicionY, radioMax: 7, TipoEdificio.Torre);
+                if (hueco.HasValue)
+                    _mundo.ConstruirEdificioIA(TipoEdificio.Torre, hueco.Value.X, hueco.Value.Y);
+            }
         }
 
         private void GestionarEntrenamiento()
@@ -202,20 +229,56 @@ namespace Modelo
             }
             if (!cuartelListo) return;
 
-            int militares = 0;
+            int soldados = 0, arqueros = 0, caballeros = 0;
             foreach (Unidad u in foto.UnidadesEnemigo)
-                if (u.EstaViva && !u.EsRecolector) militares++;
+            {
+                if (!u.EstaViva || u.EsRecolector) continue;
+                if (u.Tipo == TipoUnidad.Soldado) soldados++;
+                else if (u.Tipo == TipoUnidad.Arquero) arqueros++;
+                else if (u.Tipo == TipoUnidad.Caballero) caballeros++;
+            }
 
-            if (militares >= PresionMilitarObjetivo) return;
+            // Un slot por tipo en paralelo: infantería, luego apoyo a distancia,
+            // luego caballería si hay con qué (si falta, el intento falla y vuelve).
+            if (soldados < SoldadosObjetivo)
+                _mundo.EntrenarUnidadIA(TipoUnidad.Soldado, TipoEdificio.Cuartel);
+            if (arqueros < ArquerosObjetivo)
+                _mundo.EntrenarUnidadIA(TipoUnidad.Arquero, TipoEdificio.Cuartel);
+            if (caballeros < CaballerosObjetivo)
+                _mundo.EntrenarUnidadIA(TipoUnidad.Caballero, TipoEdificio.Cuartel);
+        }
 
-            _mundo.EntrenarUnidadIA(TipoUnidad.Soldado, TipoEdificio.Cuartel);
+        // Reunión en gracia: las tropas se concentran junto a su centro (mover
+        // sí vale en gracia; pegar no: el tick de combate las frena). Así el
+        // ejército sale formado y no desperdigado por el mapa.
+        private void GestionarReunion()
+        {
+            if (_mundo.EstadoPartida.TiempoJuegoSegundos >= _mundo.GraciaMilitarSegundos) return;
+            var foto = _mundo.Instantanea();
+            Edificio centro = null;
+            foreach (Edificio e in foto.EdificiosEnemigo)
+                if (e.Tipo == TipoEdificio.CentroUrbano && e.EstaViva) { centro = e; break; }
+            if (centro == null) return;
+
+            int i = 0;
+            foreach (Unidad u in foto.UnidadesEnemigo)
+            {
+                if (u == null || !u.EstaViva || u.EsRecolector || !u.ControladaPorIA) continue;
+                // Punto de reunión en anillo alrededor del centro (reparto).
+                int mx = centro.PosicionX + 4 + (i % 3) - 1;
+                int my = centro.PosicionY + 4 + (i / 3) % 3 - 1;
+                i++;
+                if (u.TieneDestino) continue; // ya marcha a algún lado
+                if (Math.Abs(u.PosicionX - mx) + Math.Abs(u.PosicionY - my) <= 3) continue;
+                _mundo.MoverUnidadIA(u, mx, my);
+            }
         }
 
         // Busca en anillos alrededor de (cx,cy) un ancla donde quepa la HUELLA
-        // (libre, sin yacimiento). El Cuartel ocupa 2x2.
-        private (int X, int Y)? BuscarCasillaEdificableCerca(int cx, int cy, int radioMax)
+        // del tipo pedido (libre, sin yacimiento).
+        private (int X, int Y)? BuscarCasillaEdificableCerca(int cx, int cy, int radioMax, TipoEdificio tipo)
         {
-            int lado = DatosDelJuego.LadoSegunTipo(TipoEdificio.Cuartel);
+            int lado = DatosDelJuego.LadoSegunTipo(tipo);
             for (int radio = 1; radio <= radioMax; radio++)
             {
                 for (int dx = -radio; dx <= radio; dx++)
