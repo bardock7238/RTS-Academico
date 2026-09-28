@@ -765,3 +765,157 @@ flowchart LR
 - `MensajesDescartados` se muestra en el HUD: si crece, la conexión se cayó (aviso temprano de desync).
 - Los sprites se dibujan mapeando los `enum` (`TipoUnidad`, `TipoEdificio`, `TipoRecurso`, `TipoItem`) a imágenes (`[SerializeField]` en `VistaTablero`; arte pendiente del compañero — issue #5).
 - Escena mínima: `Assets/Escenas/Juego.unity` (cámara ortográfica + placeholders; la UI se construye por código en `GestorJuego.ConstruirUiSiFalta`).
+
+---
+
+## 6. Diagrama de flujo del juego
+
+### 6.1 Flujo general del juego
+
+```mermaid
+flowchart TD
+    INICIO([Iniciar juego]) --> MENU[Menú de inicio:\nPVE / PVP]
+    MENU -->|PVE| PVE[Modo PVE:\nJugador vs IA]
+    MENU -->|PVP_HOST| HOST[Modo PVP:\nHospedar servidor]
+    MENU -->|PVP_CLIENTE| CLIENTE[Modo PVP:\nConectar a servidor]
+    
+    PVE --> INIT[Inicializar mapa,\nrecursos y Centro Urbano]
+    HOST --> INIT
+    CLIENTE --> ESPERAR[Esperar conexión\ncon el host]
+    ESPERAR --> CONECTADO{¿Conectado?}
+    CONECTADO -->|No| RECONNECT[Reintentar conexión]
+    RECONCONNECT --> ESPERAR
+    CONECTADO -->|Sí| INIT
+    
+    INIT --> GUARDAR[Guardar configuración\nen configuracion.txt]
+    GUARDAR --> BUCLE{Bucle principal\ndel juego}
+    
+    BUCLE --> INPUT[Procesar input\ndel jugador]
+    INPUT -->|Mover| MOVER[Mover unidad\npathfinding BFS]
+    INPUT -->|Construir| CONSTRUIR[Construir edificio\nTask de construcción]
+    INPUT -->|Entrenar| ENTRENAR[Entrenar unidad\nTask de entrenamiento]
+    INPUT -->|Atacar| ATACAR[Atacar enemigo\nResolver batalla]
+    INPUT -->|Recolectar| RECOLECTAR[Recolectar recurso\nTask de recolección]
+    
+    MOVER --> UPDATE[Actualizar estado\ndel mundo]
+    CONSTRUIR --> UPDATE
+    ENTRENAR --> UPDATE
+    ATACAR --> UPDATE
+    RECOLECTAR --> UPDATE
+    
+    UPDATE --> RED{¿PVP?}
+    RED -->|Sí| SYNC[Sincronizar con rival\nvía TCP]
+    RED -->|No| IA_UPDATE[Actualizar IA\nTask de IA]
+    IA_UPDATE --> UPDATE
+    SYNC --> DRAW[Refrescar vista\nInstantanea]
+    DRAW --> SAVE[Guardar log\nlog_partida.txt]
+    SAVE --> VICTORIA{¿Hay ganador?}
+    VICTORIA -->|No| BUCLE
+    VICTORIA -->|Sí| FIN[Mostrar ganardor\nGuardar resultado_final.txt]
+    FIN --> FINPARTIDA([Fin de la partida])
+    
+    style INICION fill:#e1f5e1,stroke:#2e7d32
+    style FINPARTIDA fill:#ffe1e1,stroke:#c62828
+    style BUCLE fill:#e3f2fd,stroke:#1565c0
+    style VICTORIA fill:#fff3e0,stroke:#e65100
+    style SYNC fill:#f3e5f5,stroke:#6a1b9a
+```
+
+### 6.2 Flujo de verificación de ganador
+
+```mermaid
+flowchart TD
+    A[VerificarGanador] --> B{¿Partida\nen curso?}
+    B -->|No| Z[Return: ya hay ganador]
+    B -->|Sí| C[Evaluar enemigo:\nCausaDerrota]
+    C --> D{¿Capital enemiga\ndestruida?}
+    D -->|Sí| W1[Gana jugador local:\nRegicidio]
+    D -->|No| E{¿Centro enemigo\ndestruido?}
+    E -->|Sí| W2[Gana jugador local:\nCentro destruido]
+    E -->|No| F[Evaluar jugador local:\nCausaDerrota]
+    F --> G{¿Centro Urbano\ndestruido?}
+    G -->|Sí| W3[Gana enemigo:\nCentro destruido]
+    G -->|No| H{¿Ejército\naniquilado?}
+    H -->|Sí| W4[Gana enemigo:\nAniquilación]
+    H -->|No| I[Sigue el juego]
+    
+    W1 --> J[FinalizarPartida:\nEstado + Log + Archivo]
+    W2 --> J
+    W3 --> J
+    W4 --> J
+    J --> K[Guardar resultado_final.txt]
+```
+
+### 6.3 Flujo de concurrencia (Tasks y Locks)
+
+```mermaid
+flowchart LR
+    subgraph HILO_PRINCIPAL[Hilo principal Unity]
+        V[Vista Update] -->|Instantanea| FOTO[Foto thread-safe]
+        V -->|ProcesarRed| DRENAR[Drenar mensajes]
+    end
+    
+    subgraph MODELO[Modelo Simulacion]
+        LOCK[lock Candado]
+        T1[Task: Reloj]
+        T2[Task: Entrenamiento]
+        T3[Task: Construcción]
+        T4[Task: Recolección]
+        T5[Task: Spawner items]
+        T6[Task: Expiración]
+        T7[Task: Batalla]
+        T8[Task: IA]
+        COLA_OUT[ConcurrentQueue salientes]
+    end
+    
+    subgraph RED[ConectorRed]
+        TCP[Thread TCP]
+        COLA_IN[ConcurrentQueue recibidos]
+    end
+    
+    subgraph ARCHIVOS[GestorArchivos]
+        LOG[Thread Escritor]
+        COLA_LOG[BlockingCollection]
+    end
+    
+    T1 & T2 & T3 & T4 & T5 & T6 & T7 & T8 -->|mutar| LOCK
+    T1 & T2 & T3 & T4 & T5 & T6 & T7 & T8 -->|Transmitir| COLA_OUT
+    COLA_OUT -->|SiguienteSaliente| DRENAR
+    TCP -->|recibir| COLA_IN
+    COLA_IN -->|RecibirMensaje| DRENAR
+    T1 & T2 & T3 & T4 & T5 & T6 & T7 & T8 -->|RegistrarAccion| COLA_LOG
+    COLA_LOG --> LOG
+```
+
+### 6.4 Flujo de comunicación en red
+
+```mermaid
+sequenceDiagram
+    participant J1 as Jugador 1 Host
+    participant S1 as Simulacion Host
+    participant TCP as TCP Socket
+    participant S2 as Simulacion Cliente
+    participant J2 as Jugador 2 Cliente
+
+    J1->>S1: Construir/Entrenar/Mover/Atacar
+    S1->>S1: lock: aplicar acción local
+    S1->>S1: Transmitir comando
+    C1->>TCP: Enviar comando (fuera lock)
+    TCP->>S2: Recibir comando
+    S2->>S2: lock: aplicar mismo comando
+    S2-->>J2: Instantanea actualizada
+    J2->>S2: Construir/Entrenar/Mover/Atacar
+    S2->>S2: lock: aplicar acción local
+    S2->>S2: Transmitir comando
+    S2->>TCP: Enviar comando (fuera lock)
+    TCP->>S1: Recibir comando
+    S1->>S1: lock: aplicar mismo comando
+    S1-->>J1: Instantanea actualizada
+```
+
+**Justificación del diseño:**
+1. **Regla de oro:** NUNCA se escribe a un socket ni a disco dentro de `lock(Candado)`. Las Tasks solo encolan; el Controlador envía desde el hilo principal.
+2. **Vista tonta:** Solo lee `Instantanea()` (una copia segura) y dibuja. Nunca toca listas vivas.
+3. **Convergencia:** Ambos jugadores ejecutan la MISMA fórmula de daño → mismo resultado sin enviar estado completo.
+4. **Reconexión:** Si la red cae, `ConectorRed` reintenta cada 1 segundo sin bloquear el juego.
+5. **Logs asíncronos:** `GestorArchivos` usa productor-consumidor para que la escritura a disco nunca frene la simulación.

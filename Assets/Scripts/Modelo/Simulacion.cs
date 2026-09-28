@@ -1420,6 +1420,20 @@ namespace Modelo
 
         // VERIFICACIÓN DE GANADOR (revisa a AMBOS jugadores)
 
+        /// <summary>
+        /// Verifica si algún jugador ha perdido la partida.
+        /// Reglas de derrota (según la guía):
+        ///   1. El Centro Urbano de un jugador fue destruido.
+        ///   2. Todas las unidades de un jugador fueron destruidas.
+        ///   3. (Regicidio) La capital enemiga cayó aunque queden tropas.
+        /// El método es thread-safe: se ejecuta dentro de lock(Candado).
+        /// </summary>
+        /// <remarks>
+        /// Se llama automáticamente después de cada ataque, destrucción de unidad
+        /// o destrucción de edificio. Si hay ganador, finaliza la partida y
+        /// guarda el resultado en resultado_final.txt.
+        /// </remarks>
+        /// <returns>void (el resultado se refleja en EstadoPartida.GanadorNombre)</returns>
         public void VerificarGanador()
         {
             lock (Candado)
@@ -1444,6 +1458,13 @@ namespace Modelo
         //   bases menores (puede reponerse: hay que rematar la capital).
         // · El JUGADOR cae si pierde su Centro o se queda sin unidades.
         // Devuelve la causa o null si ese lado sigue vivo.
+
+        /// <summary>
+        /// Determina si un jugador ha perdido la partida.
+        /// </summary>
+        /// <param name="jugador">Jugador a evaluar</param>
+        /// <param name="esEnemigo">True si se evalúa al enemigo (regicidio asimétrico)</param>
+        /// <returns>Cadena con la causa de derrota, o null si el jugador sigue vivo</returns>
         private string CausaDerrota(Jugador jugador, bool esEnemigo)
         {
             if (esEnemigo)
