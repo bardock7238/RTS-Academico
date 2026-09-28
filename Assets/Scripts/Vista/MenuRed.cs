@@ -1,6 +1,7 @@
 using UnityEngine;
 using UnityEngine.UI;
 using Controlador;
+using Modelo;
 
 namespace Vista
 {
