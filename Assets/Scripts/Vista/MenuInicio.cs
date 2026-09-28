@@ -159,13 +159,6 @@ namespace Vista
 #endif
         }
 
-        public void AlternarAyuda() => MostrarAyuda(_ayudaGo == null || !_ayudaGo.activeSelf);
-
-        private void MostrarAyuda(bool visible)
-        {
-            if (_ayudaGo != null) _ayudaGo.SetActive(visible);
-        }
-
         private void ConstruirSiFalta()
         {
             if (_construido) return;
@@ -252,24 +245,66 @@ namespace Vista
             UiFabrica.Boton(caja.transform, "SALIR", ElegirSalir,
                 new Vector2(0.5f, 0.5f), new Vector2(360, 44), new Vector2(0, -120), 16, "rojo");
 
-            _ayudaGo = new GameObject("Ayuda", typeof(RectTransform));
-            _ayudaGo.transform.SetParent(caja.transform, false);
-            var art = (RectTransform)_ayudaGo.transform;
-            art.anchorMin = new Vector2(0.5f, 0.5f);
-            art.anchorMax = new Vector2(0.5f, 0.5f);
-            art.pivot = new Vector2(0.5f, 0.5f);
-            art.sizeDelta = new Vector2(440, 110);
-            art.anchoredPosition = new Vector2(0, -195);
-            _txtAyuda = UiFabrica.TextoCaja(_ayudaGo.transform, "TxtAyuda",
-                "Izq: seleccionar/ordenar · Der: añadir a grupo · Arrastrar: varias · Minimapa: clic mueve cámara\n" +
-                "QWER entrenar · 1-4 construir (Esc cancela) · C recoger (x2=cercano) · I item · T mercado · Y mejoras\n" +
-                "Clic en ciervo: cazarlo con aldeanos o tropas (+100 comida) · Alt+QWER: seleccionar tipo\n" +
-                "Flechas/rueda/central: cámara · M: vista completa · Esc: deseleccionar · Menú: volver al inicio\n" +
-                "S: sonido sí/no · Ctrl+5-9: guardar grupo · 5-9: llamar grupo\n" +
-                "Exploración: encuentra la capital oculta entre la niebla y destrúyela",
-                new Vector2(0.5f, 0.5f), new Vector2(440, 110), Vector2.zero, 11);
-            _txtAyuda.alignment = TextAnchor.MiddleCenter;
-            _txtAyuda.color = new Color(0.85f, 0.9f, 0.85f, 1f);
+            _ayudaGo = null; // se construye grande al abrir (ver ConstruirAyuda)
+            _txtAyuda = null;
+        }
+
+        public void AlternarAyuda() => MostrarAyuda(_ayudaGo == null || !_ayudaGo.activeSelf);
+
+        private void MostrarAyuda(bool visible)
+        {
+            if (visible) ConstruirAyuda();
+            if (_ayudaGo == null) return;
+            if (visible) _ayudaGo.transform.SetAsLastSibling();
+            _ayudaGo.SetActive(visible);
+        }
+
+        // Ayuda en mini-ventana grande: objetivo, selección, órdenes, cámara,
+        // teclas y red. Letra legible y botón VOLVER (Esc no entra con el menú).
+        private void ConstruirAyuda()
+        {
+            if (_ayudaGo != null || _panel == null) return;
+
+            _ayudaGo = UiFabrica.Panel(_panel.transform, "AyudaGrande",
+                Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero).gameObject;
+            var prt = (RectTransform)_ayudaGo.transform;
+            prt.offsetMin = Vector2.zero;
+            prt.offsetMax = Vector2.zero;
+            _ayudaGo.GetComponent<Image>().color = new Color(0.01f, 0.03f, 0.02f, 0.96f);
+
+            var caja = UiFabrica.Panel(_ayudaGo.transform, "CajaAyuda",
+                new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f),
+                new Vector2(700, 540), Vector2.zero);
+            caja.GetComponent<Image>().color = new Color(0.10f, 0.14f, 0.12f, 1f);
+
+            var titulo = UiFabrica.TextoCaja(caja.transform, "TituloAyuda", "CÓMO JUGAR",
+                new Vector2(0.5f, 0.5f), new Vector2(660, 40), new Vector2(0, 240), 28);
+            titulo.alignment = TextAnchor.MiddleCenter;
+            titulo.color = new Color(1f, 0.85f, 0.4f, 1f);
+
+            _txtAyuda = UiFabrica.TextoCaja(caja.transform, "TxtAyuda",
+                "OBJETIVO: destruye la capital enemiga (anillo dorado) y defiende la tuya.\n" +
+                "En exploración la capital está oculta entre la niebla: búscala primero.\n" +
+                "\n" +
+                "SELECCIÓN: clic izquierdo selecciona y ordena · clic derecho añade al grupo\n" +
+                "Arrastra para varias · Alt+QWER: todas las de ese tipo · Ctrl+5-9 guarda grupo, 5-9 lo llama.\n" +
+                "\n" +
+                "ÓRDENES (clic según lo que apuntes): mover · atacar tropa · demoler edificio\n" +
+                "recolectar yacimiento · recoger item · cazar ciervo (+100 comida).\n" +
+                "QWER entrenar · 1-4 construir (Esc cancela) · C recoger · I item cercano.\n" +
+                "\n" +
+                "CÁMARA: flechas / rueda / botón central arrastrando · M vista completa\n" +
+                "Clic en el minimapa para saltar a esa zona.\n" +
+                "\n" +
+                "TECLAS: T mercado · Y herrería · S sonido · Esc deselecciona o cierra.\n" +
+                "\n" +
+                "RED: JUGAR EN RED, puerto 5505 · uno hospeda y el otro conecta con su IP.",
+                new Vector2(0.5f, 0.5f), new Vector2(660, 380), new Vector2(0, 10), 15);
+            _txtAyuda.alignment = TextAnchor.UpperLeft;
+            _txtAyuda.color = new Color(0.88f, 0.92f, 0.88f, 1f);
+
+            UiFabrica.Boton(caja.transform, "VOLVER", AlternarAyuda,
+                new Vector2(0.5f, 0.5f), new Vector2(300, 44), new Vector2(0, -238), 18, "verde");
             _ayudaGo.SetActive(false);
         }
     }
