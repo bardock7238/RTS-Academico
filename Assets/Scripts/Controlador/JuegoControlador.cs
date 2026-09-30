@@ -4,24 +4,94 @@ using Modelo;
 
 namespace Controlador
 {
-    //  CONTROLADOR (capa delgada)
-    //  ----------------------------------------------------------------------------
-    //  Aquí NO vive la concurrencia: el motor concurrente está en Modelo/Simulacion
-    //  (reloj, entrenamiento, construcción, recolección, spawner de items y el
-    //  candado del mundo). Este Controlador:
-    //     1. Expone el mundo (los objetos ENTEROS vienen del Modelo).
-    //     2. Traduce acciones del usuario → métodos del Modelo (que se andan solos).
-    //     3. Traduce mensajes de red → métodos "Espejo" del Modelo.
-    //     4. Anuncia al rival las acciones (enviar por TCP) y escribe logs.
+    // ============================================================================
+    //  CONTROLADOR — el PUENTE entre Vista y Modelo
+    // ============================================================================
+    //  REGLA DE ORO DE ESTA CAPA: aquí NO hay ni un Task, ni un Thread, ni un
+    //  lock. El Controlador es un simple traductor que corre SIEMPRE en el hilo
+    //  principal de Unity. Toda la concurrencia vive en Modelo/Simulacion.cs.
     //
-    //  El único "hilo" que sigue aquí es el del socket TCP (ConectorRed), que ahora
-    //  también vive en Modelo, y la cola que llena ese hilo; el procesamiento de los
-    //  mensajes lo hace la Vista desde el hilo principal (ver ProcesarMensajesRedPendientes).
+    //  LOS INTERCAMBIOS EXACTOS (los 7 puntos por los que pasa la información):
+    //  ---------------------------------------------------------------------------
+    //  (1) VISTA -> CONTROLADOR, al arrancar la escena
+    //      GestorJuego.Awake() hace:  new JuegoControlador(nombre, localArriba)
+    //      El Controlador construye el Modelo (new Simulacion(...)), que a su vez
+    //      arma el mundo y ARRANCA SUS PROPIAS TASKS (reloj, bucle, fauna, etc.).
     //
-    //  Los tiempos (cuánto tarda un entrenamiento, cada cuánto late el reloj...) los
-    //  define el Modelo (Simulacion); el Controlador solo pide y avisa.
+    //  (2) VISTA -> CONTROLADOR, cada frame (en GestorJuego.Update())
+    //      a) ProcesarMensajesRedPendientes()  (red -> modelo, ver punto 4)
+    //      b) Instantanea()                     (modelo -> vista, ver punto 5)
+    //      El orden importa: la red primero, para pintar el frame ya al día.
+    //
+    //  (3) VISTA -> CONTROLADOR, cuando el usuario actúa
+    //      ControlInputUsuario / MenuMercado / MenuMejoras llaman aquí las
+    //      acciones (MoverUnidad, ConstruirEdificio, EntrenarUnidad, Atacar,
+    //      MoverARecolectar, MoverARecogerItem, VenderRecurso, Mejorar*, ...).
+    //      Cada una son 2 líneas: la primera delega en el Modelo (que valida
+    //      bajo lock) y la segunda anuncia la acción al rival por red.
+    //
+    //  (4) CONTROLADOR -> MODELO, al recibir red
+    //      ProcesarMensajesRedPendientes() -> ProcesarMensajeRed(mensaje) ->
+    //      Motor.MoverUnidadRival / AplicarAtaqueRivalAUnidad / CrearUnidadRival
+    //      ... El mensaje se traduce a un método "Espejo" del Modelo, que vuelve
+    //      a tomar su candado para mutar SU copia del mundo.
+    //
+    //  (5) MODELO -> VISTA, al pintar (el único camino de regreso de datos)
+    //      Motor.Instantanea() copia las listas bajo lock(Candado) y devuelve un
+    //      InstantaneaJuego INMUTABLE. La Vista dibuja sobre esa copia. Nunca
+    //      lee las listas vivas, así que no hay riesgo de "Collection was
+    //      modified" aunque 10 Tasks estén mutando el mundo a la vez.
+    //
+    //  (6) MODELO -> RED, cuando el Modelo decide algo solo
+    //      El Modelo llama a su propio Transmitir(mensaje), que mete el texto en
+    //      la ConcurrentQueue _salientes. NO escribe al socket (¡nunca dentro de
+    //      lock!). El Controlador la drena aquí, en el hilo principal, y la
+    //      manda por ConectorRed. Así es como un ataque del bucle de simulación
+    //      o un item del spawner llegan al rival.
+    //
+    //  (7) VISTA -> CONTROLADOR, al apagar
+    //      GestorJuego.OnDestroy() / OnApplicationQuit() llaman Detener(), que
+    //      cancela los 6 CancellationTokenSource del motor, drena la cola
+    //      saliente, cierra el socket y hace Flush de los logs a disco.
+    //
+    //  LO QUE ESTA CAPA NO HACE JAMÁS:
+    //    · No toca un Transform, un SpriteRenderer ni un Text.
+    //    · No crea hilos ni toma candados.
+    //    · No inventa reglas: si algo no es válido, lo dice el Modelo (false).
+    //  ============================================================================
     public class JuegoControlador
     {
+        // [Concurrencia aquí? NO.] El cerebro concurrente ES el Modelo.
+        // Exponemos el motor para que la Vista y las pruebas configuren la simulación.
+        public Simulacion Motor { get; }
+
+        public Jugador JugadorLocal => Motor.JugadorLocal;
+        public Jugador JugadorEnemigo => Motor.JugadorEnemigo;
+        // Capital enemiga (su primer Centro): objetivo del regicidio.
+        public Edificio CapitalEnemiga => Motor.CapitalEnemiga;        public Mapa Tablero => Motor.Tablero;
+        public Partida EstadoPartida => Motor.EstadoPartida;
+        public IReadOnlyList<Item> ItemsVisibles => Motor.ItemsVisibles;
+
+        public ConectorRed RedPartida { get; private set; }
+        public string NombreRivalRed { get; private set; }
+
+        // Escenario opcional: nº de bases enemigas (1..4) y si arrancan
+        // avanzadas (Cuartel + soldados) o básicas; igual para el jugador.
+        // Ritmo (Rápida/Normal/Larga) e inicio rico (colchón + aldeanos + Casa).
+        // Todo por defecto = partida clásico. No rompe llamadas existentes.
+        public JuegoControlador(string nombreJugador, bool localArriba = true,
+            int basesEnemigas = 1, bool enemigoAvanzado = false, bool jugadorAvanzado = false,
+            RitmoPartida ritmo = RitmoPartida.Normal, bool inicioRico = false,
+            bool exploracion = false)
+        {
+            // === INTERCAMBIO (1): VISTA -> MODELO, construcción del mundo ===
+            // El Modelo arma el mundo entero (jugadores, mapa, partida, posiciones)
+            // y arranca SUS tareas de fondo (reloj, bucle, fauna, economía y, si
+            // soy host, el spawner). Todo eso ocurre aquí, en el hilo principal,
+            // pero las Tasks que lanza siguen corriendo en el pool después.
+            Motor = new Simulacion(nombreJugador, localArriba, basesEnemigas, enemigoAvanzado, jugadorAvanzado, ritmo, inicioRico, exploracion);
+        }
+
         // [Concurrencia aquí? NO.] El cerebro concurrente ES el Modelo.
         // Exponemos el motor para que la Vista y las pruebas configuren la simulación.
         public Simulacion Motor { get; }
@@ -57,7 +127,25 @@ namespace Controlador
         // Cambia el ritmo en caliente (gracia + daño IA).
         public void AplicarRitmo(RitmoPartida ritmo) => Motor.AplicarRitmo(ritmo);
 
-        // ACCIONES DE JUEGO (todas delegan al Modelo)
+        // ========================================================================
+        //  INTERCAMBIO (3): VISTA -> MODELO   (y de vuelta: MODELO -> RED)
+        // ========================================================================
+        //  Este es el BLOQUE COMPLETO de cada acción del jugador. Son 3 pasos
+        //  fijos, y solo cambian los datos:
+        //
+        //    Paso 1  Guardar la posición de ORIGEN (el rival la necesitará).
+        //    Paso 2  Delegar en el Modelo. ÉL valida (recursos, coordenadas,
+        //            unidad en rango, partida viva) con lock(Candado) y muta.
+        //            Si devuelve false, la acción es inválida y se aborta aquí.
+        //    Paso 3  Si fue aceptada, ENCOLAR el comando para el rival.
+        //            EnviarPorRed NO escribe al socket: mete el texto en la
+        //            cola y el hilo de red lo saca. Por eso nunca hay bloqueo.
+        //
+        //  La Vista recibe el `true`/`false` de retorno y decide si muestra
+        //  un mensaje de éxito o llama a AccionRechazada().
+        // ========================================================================
+
+        // ACCIONES DE JUEGO (todas delegan en el Modelo)
 
         // 1. Mover Unidad
         public bool MoverUnidad(Unidad unidad, int nuevoX, int nuevoY)
@@ -158,6 +246,23 @@ namespace Controlador
         // Cambio de modo en caliente: PVE → red/PvP apaga la IA sin detener la partida.
         public bool DetenerIA() => Motor.DetenerIA();
 
+        // ========================================================================
+        //  INTERCAMBIO (5): MODELO -> VISTA   (el único camino de regreso)
+        // ========================================================================
+        //  Instantanea() es la ÚNICA forma en que los datos del Modelo llegan
+        //  a la Vista. Motor.Instantanea() toma lock(Candado) una sola vez,
+        //  copia las 7 listas y los 5 recursos a un objeto InstantaneaJuego
+        //  whose propiedades son de solo lectura, y lo devuelve.
+        //
+        //  Por qué una copia y no las listas vivas:
+        //    · La Vista las recorre en cada frame, y a la vez 10 Tasks pueden
+        //      estar agregando/quitando unidades. Recorrer la original sin
+        //      candado lanzaría "Collection was modified" y dibujaría a medias.
+        //    · Con la copia, la Vista itera SUYA lista: si en el Modelo muere
+        //      una unidad a media partida, en la Vista esa unidad simplemente
+        //      aparece en el frame siguiente. Cero excepciones.
+        //  La Vista debe llamar esto UNA vez por frame y pintar desde ahí.
+        // ========================================================================
         // API PARA LA VISTA (Unity)
 
         // Foto segura del mundo para pintar. La Vista la llama UNA vez por frame y
@@ -245,6 +350,19 @@ namespace Controlador
             return true;
         }
 
+        // ========================================================================
+        //  INTERCAMBIO (6): MODELO -> RED
+        // ========================================================================
+        //  El Modelo, desde cualquier Task, llama a su Transmitir(mensaje),
+        //  que solo hace _salientes.Enqueue(mensaje) sobre una
+        //  ConcurrentQueue. OJO: el Modelo NUNCA escribe al socket, porque
+        //  hacerlo dentro de lock(Candado) podría congelar el mundo entero si
+        //  el rival tiene la red lenta.
+        //
+        //  El socket se toca acá, en el hilo principal, dentro de
+        //  ProcesarMensajesRedPendientes(). Ese es el diseño completo del
+        //  productor-consumidor de la capa de red.
+        // ========================================================================
         // RED (sockets TCP)
 
         // Modo host: abre el puerto y espera a que un rival se conecte.

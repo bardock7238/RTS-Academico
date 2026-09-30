@@ -172,7 +172,8 @@ classDiagram
         +bool EnEjecucion
         +int TiempoJuegoSegundos
         +string GanadorNombre
-        +Finalizar(string)
+        +string MotivoVictoria
+        +Finalizar(string, string)
     }
 
     class DatosDelJuego {
@@ -296,6 +297,8 @@ classDiagram
         +string UltimoError
         +event AlConectar
         +bool HayMensajes
+        +DateTime UltimoEnviado
+        +DateTime UltimoRecibido
         +IniciarHost(int) bool
         +Conectar(string, int) bool
         +Enviar(string) bool
@@ -310,31 +313,50 @@ classDiagram
         +Simulacion Motor
         +Jugador JugadorLocal
         +Jugador JugadorEnemigo
+        +Edificio CapitalEnemiga
         +Mapa Tablero
         +Partida EstadoPartida
+        +IReadOnlyList~Item~ ItemsVisibles
         +ConectorRed RedPartida
         +string NombreRivalRed
         +int MensajesDescartados
         +bool IAActiva
+        +bool ModoExploracion
+        +double FactorDanoIA
+        +int GraciaMilitarSegundos
+        +bool ReposicionAldeanos
+        +IReadOnlyList~string~ FaccionesRivales
         +IniciarIA() bool
+        +DetenerIA() bool
         +MoverUnidad(Unidad, int, int) bool
+        +CancelarDestino(Unidad) bool
+        +MoverARecolectar(Unidad, Recurso) bool
+        +MoverARecogerItem(Unidad, Item) bool
         +ConstruirEdificio(TipoEdificio, int, int) bool
         +EntrenarUnidad(TipoUnidad, TipoEdificio) bool
         +IniciarRecoleccion(Unidad, Recurso) bool
         +DetenerRecoleccion(Unidad) bool
+        +EstaRecolectando(Unidad) bool
         +Atacar(Unidad, Unidad) bool
         +MoverAAtacar(Unidad, Unidad) bool
         +AtacarEdificio(Unidad, Edificio) bool
         +MoverAAtacarEdificio(Unidad, Edificio) bool
-        +CapitalEnemiga
+        +VerificarGanador()
+        +VenderRecurso(TipoRecurso) bool
+        +ComprarRecurso(TipoRecurso) bool
+        +MejorarAtaque() bool
+        +MejorarDefensa() bool
+        +MejorarRecoleccion() bool
         +AplicarRitmo(RitmoPartida)
-        +ModoExploracion
         +EsVisible(int, int) bool
         +ColocarItem(TipoItem, int, int, bool) bool
         +RecogerItem(Unidad, Item) bool
         +IniciarBatalla(int) int
         +DetenerBatalla()
         +BucleBatallaActivo
+        +int TicksSimulados
+        +int BajasLocal
+        +int BajasEnemigo
         +Instantanea() InstantaneaJuego
         +HospedarRed(int) bool
         +ConectarRed(string, int) bool
@@ -379,13 +401,29 @@ classDiagram
 
     %% ================= VISTA (implementada — mínima jugable) =================
     class GestorJuego {
-        <<MonoBehaviour>>
+        <<MonoBehaviour — raíz de la Vista>>
         +JuegoControlador Controlador
         +InstantaneaJuego UltimaFoto
         +VistaTablero VistaTablero
+        +MenuInicio MenuInicio
+        +MenuRed MenuRed
+        +MenuMercado MenuMercado
+        +MenuMejoras MenuMejoras
         +string MensajeEstado
-        +MostrarMensaje(string, float)
+        +bool MensajeEsError
+        +string EstadoSeleccion
+        +MostrarMensaje(string, float, bool)
+        +LimpiarMensaje()
         +AccionRechazada(string)
+        +ReiniciarConEscenario(int, bool, bool, RitmoPartida, bool, bool)
+        +IniciarPartidaRed(bool, string)
+        +ReintentarUltimaPartida()
+        +VolverAlMenu()
+        -Awake()
+        -Update()
+        -VigilarEventosSonido()
+        -VigilarDesconexion()
+        -OnDestroy()
         -ConstruirUiSiFalta()
     }
     class VistaTablero {
@@ -393,6 +431,8 @@ classDiagram
         +Inicializar(GestorJuego)
         +MarcarSeleccion(int, int)
         +LimpiarSeleccion()
+        +MostrarFantasma(TipoEdificio, int, int, bool)
+        +OcultarFantasma()
         +Actualizar(InstantaneaJuego)
         -DibujarRejilla()
     }
@@ -400,36 +440,79 @@ classDiagram
         <<MonoBehaviour>>
         +Inicializar(GestorJuego)
         +Actualizar(InstantaneaJuego, GestorJuego)
+        +Reiniciar()
     }
     class ControlInputUsuario {
         <<MonoBehaviour>>
         +Inicializar(GestorJuego)
+        +LimpiarTodo()
+        -SeleccionarSolo(Unidad)
+        -SeleccionarPorTipo(TipoUnidad)
+        -AgregarSeleccion(Unidad)
+        -GuardarGrupo(int)
+        -CargarGrupo(int)
         -IniciarModoRecoger()
         -EjecutarModoRecoger(int, int)
         -IntentarRecolectar(InstantaneaJuego, int, int)
+        -IntentarEntrenar(TipoUnidad)
         -RecogerItemCercano()
         -RecogerItemConClick(Item)
+        -Update() / -OnGUI()
     }
     class PanelFinPartida {
         <<MonoBehaviour>>
         +Inicializar(GestorJuego)
         +Actualizar(InstantaneaJuego)
-        +Reiniciar()
+        +Ocultar()
+        -ConstruirUi()
+    }
+    class MenuInicio {
+        <<MonoBehaviour>>
+        +Inicializar(GestorJuego)
+        +Mostrar()
+    }
+    class MenuRed {
+        <<MonoBehaviour>>
+        +Inicializar(GestorJuego)
+        +Mostrar()
+        -Hospedar()
+        -Conectar()
+    }
+    class MenuMercado {
+        <<MonoBehaviour>>
+        +Inicializar(GestorJuego)
+    }
+    class MenuMejoras {
+        <<MonoBehaviour>>
+        +Inicializar(GestorJuego)
+    }
+    class Minimap {
+        <<MonoBehaviour>>
+        +Inicializar(GestorJuego, Transform)
     }
 
     %% La Vista solo lee y delega en el Controlador
-    GestorJuego "1" o-- "1" JuegoControlador : único dueño
+    GestorJuego "1" *-- "1" JuegoControlador : único dueño
     GestorJuego "1" o-- "1" VistaTablero
     GestorJuego "1" o-- "1" HudRecursos
     GestorJuego "1" o-- "1" ControlInputUsuario
     GestorJuego "1" o-- "1" PanelFinPartida
-    HudRecursos ..> JuegoControlador : lee Instantanea
-    VistaTablero ..> JuegoControlador : Instantanea 1/frame
+    GestorJuego "1" o-- "1" MenuInicio
+    GestorJuego "1" o-- "1" MenuRed
+    GestorJuego "1" o-- "1" MenuMercado
+    GestorJuego "1" o-- "1" MenuMejoras
+    GestorJuego "1" o-- "1" Minimap
+
     ControlInputUsuario ..> JuegoControlador : Mover/Construir/Entrenar/Atacar/Recoger
-    PanelFinPartida ..> JuegoControlador : Detener en OnDestroy
-    HudRecursos ..> InstantaneaJuego : lee copia
-    VistaTablero ..> InstantaneaJuego : lee copia
-    PanelFinPartida ..> InstantaneaJuego : lee copia
+    MenuInicio ..> GestorJuego : ReiniciarConEscenario / IniciarPartidaRed
+    MenuRed ..> GestorJuego : IniciarPartidaRed(host, ip)
+    MenuMercado ..> JuegoControlador : VenderRecurso / ComprarRecurso
+    MenuMejoras ..> JuegoControlador : MejorarAtaque/Defensa/Recoleccion
+    HudRecursos ..> InstantaneaJuego : lee foto
+    VistaTablero ..> InstantaneaJuego : lee foto
+    PanelFinPartida ..> InstantaneaJuego : lee foto
+    Minimap ..> InstantaneaJuego : lee foto
+    ControlInputUsuario ..> InstantaneaJuego : selecciona sobre la foto
 ```
 
 **Nota sobre `JuegoControlador.Motor`:** es `public` a propósito. Las pruebas de escritorio (fuera de Unity) necesitan ajustar los tiempos del motor (`CicloRecoleccionMs`, `EsperarEntrenamiento`, etc.) y consultar contadores de batalla. Envolverlo fue una mejora evaluada y descartada por romper esas suites; queda documentado como decisión.
@@ -454,7 +537,7 @@ flowchart LR
         UC03(["Entrenar unidad"])
         UC05(["Mover unidad"])
         UC06(["Atacar unidad enemiga"])
-        UC07(["Atacar edificio enemigo"])
+        UC07(["Atacar / sitiar edificio enemigo"])
         UC08(["Recolectar recursos"])
         UC09(["Recoger item"])
         UC04(["Sincronizar acciones por red TCP"])
@@ -464,6 +547,10 @@ flowchart LR
         UC17(["Reconectar si el rival cae"])
         UC18(["Modo Batalla - concurrencia masiva"])
         UC20(["Partida PVE - jugar contra la IA"])
+        UC21(["Comprar / vender en el mercado"])
+        UC22(["Mejorar ataque / defensa / recolección"])
+        UC23(["Exploracion con niebla de guerra"])
+        UC24(["Cazar fauna (ciervos)"])
     end
 
     J --> UC02
@@ -478,6 +565,10 @@ flowchart LR
     J --> UC18
     J --> UC04
     J --> UC20
+    J --> UC21
+    J --> UC22
+    J --> UC23
+    J --> UC24
     R --> UC04
     IA --> UC20
 
@@ -486,6 +577,9 @@ flowchart LR
     UC06 -.->|include| UC19
     UC07 -.->|include| UC19
     UC20 -.->|include| UC12
+    UC07 -.->|include - asedio automatico al llegar| UC06
+    UC23 -.->|include| UC11
+    UC24 -.->|include - da +comida| UC08
 ```
 
 ### 2.2 Versión formal PlantUML
@@ -541,7 +635,53 @@ UC07 ..> UC19 : <<include>>
 
 ## 3. Diagramas de secuencia
 
-Formato del protocolo: para que rendericen en cualquier visor, en los diagramas el comando se representa como `NOMBRE (campos)`. En el protocolo real (ver `ConectorRed.cs`) los campos van separados por `;`: `MOVER;<ox>;<oy>;<x>;<y>`, `ATACAR;<ax>;<ay>;<bx>;<by>;<dano>`, `ATACAR_EDIFICIO;<ax>;<ay>;<ex>;<ey>;<ataque>`, `CONSTRUIR;<Tipo>;<x>;<y>`, `ENTRENAR;<Tipo>;<x>;<y>`, `RECOLECTAR;<x>;<y>;<1|0>`, `ITEM;<TipoItem>;<x>;<y>`, `RECOGER_ITEM;<TipoItem>;<x>;<y>`, `FIN;<ganador>`.
+Formato del protocolo: para que rendericen en cualquier visor, en los diagramas el comando se representa como `NOMBRE (campos)`. En el protocolo real (ver `ConectorRed.cs`) los campos van separados por `;`: `SALUDO;<nombre>`, `MOVER;<ox>;<oy>;<x>;<y>`, `ATACAR;<ax>;<ay>;<bx>;<by>;<dano>`, `ATACAR_EDIFICIO;<ax>;<ay>;<ex>;<ey>;<ataque>`, `CONSTRUIR;<Tipo>;<x>;<y>`, `ENTRENAR;<Tipo>;<x>;<y>`, `RECOLECTAR;<x>;<y>;<1|0>`, `ITEM;<TipoItem>;<x>;<y>`, `RECOGER_ITEM;<TipoItem>;<x>;<y>`, `FIN;<ganador>`, `PING` / `PONG` (latido silencioso anti-tubo-muerto).
+
+> **Nota (aridad).** Cada comando declara su número de campos en el diccionario `Aridad` de `JuegoControlador`. Un mensaje truncado (por una reconexión a medias) se registra como "mal formado" y se descarta, en vez de reventar el `Update()`.
+
+### 3.0 Latido y detección de tubo muerto (PING/PONG)
+
+```mermaid
+sequenceDiagram
+    participant CG as GestorJuego (Update)
+    participant C as JuegoControlador
+    participant CR as ConectorRed
+
+    Note over C: ProcesarMensajesRedPendientes()
+    C->>C: ¿Han pasado 3 s sin enviar? → EnviarPorRed("PING")
+    CR->>CR: Escribe la línea (lock _lockEnvio)
+    Note over CR: El rival responde PING→PONG al instante
+
+    Note over C: ¿Han pasado 15 s sin recibir NADA?
+    C->>CR: CortarConexion()
+    Note over CR: El hilo de escucha sale de ReadLine()<br/>y el ciclo (servidor/cliente) reintenta solo
+    CG->>CG: VigilarDesconexion(): 5 s sin rival → vuelve al menú
+```
+
+**Por qué existe:** una red WiFi puede cortar el tubo "a medias" (sin `FIN`): todo queda callado y el espejo se congela. El latido lo detecta en 15 s sin reiniciar la partida; la reconexión la hace el propio hilo de red.
+
+### 3.7 Mercado y herrería (exclusivos del jugador local)
+
+```mermaid
+sequenceDiagram
+    participant U as Usuario (tecla T / Y)
+    participant MM as MenuMercado / MenuMejoras (Vista)
+    participant C as JuegoControlador
+    participant S as Simulacion
+
+    U->>MM: clic en "Vender 100 madera" / "+1 Ataque"
+    MM->>C: VenderRecurso(TipoRecurso) / MejorarAtaque()
+    C->>S: Motor.VenderRecurso(...) / Motor.MejorarAtaque()
+    S->>S: lock(Candado) — QuitarDe(100) + Recibir(60 oro)<br/>o Gastar(costos) + BonoAtaque++
+    S-->>C: true
+    C-->>MM: true
+    MM->>MM: MostrarMensaje("Vendidos 100 de Madera (+60 oro)")
+
+    Note over S: No se anuncia por red a propósito:<br/>el trueque y la herrería sondecidedores locales
+    Note over CG: El próximo frame la foto ya trae los recursos nuevos
+```
+
+
 
 ### 3.1 Mover una unidad y espejarlo en el rival
 
@@ -692,6 +832,57 @@ sequenceDiagram
     Note over CG: Detener() en OnDestroy → _ia.Detener()
 ```
 
+### 3.8 El frame completo: Vista ↔ Controlador ↔ Modelo
+
+Este es el ciclo que se repite ~60 veces por segundo. Muestra **exactamente** dónde está cada intercambio:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as Usuario
+    participant IN as ControlInputUsuario (Vista)
+    participant GJ as GestorJuego (Vista)
+    participant C as JuegoControlador
+    participant S as Simulacion (Modelo)
+    participant CR as ConectorRed (Modelo)
+    participant T as Hud / VistaTablero / Minimap (Vista)
+
+    Note over GJ: === Update() en el HILO PRINCIPAL de Unity ===
+    GJ->>C: ProcesarMensajesRedPendientes()  (intercambio 2)
+    C->>C: drena _salientes (Modelo hacia red)
+    C->>CR: Enviar(...)  (FUERA de lock)
+    C->>C: RecibirMensaje() -> ProcesarMensajeRed(mensaje)
+    C->>S: Motor.MoverUnidadRival(...) / AplicarAtaqueRival...
+    S->>S: lock(Candado) - aplica el espejo
+    C->>C: si GanadorNombre != null, envia FIN (una sola vez)
+
+    GJ->>C: Instantanea()  (intercambio 2)
+    C->>S: Motor.Instantanea()
+    S->>S: lock(Candado) - COPIA listas y recursos
+    S-->>C: InstantaneaJuego
+    C-->>GJ: UltimaFoto
+    GJ->>T: Actualizar(UltimaFoto)  (intercambio A: pintar)
+    T->>T: dibuja sprites, HUD, minimapa (solo COPIAS)
+
+    Note over U,S: === Cuando el usuario hace clic ===
+    U->>IN: clic en el mapa
+    IN->>IN: celda desde raycast, busca en UltimaFoto
+    IN->>C: MoverUnidad / ConstruirEdificio / Atacar / Entrenar  (intercambio 3)
+    C->>S: Motor.MoverUnidad(...)  (Controlador hacia Modelo)
+    S->>S: lock(Candado) - valida y muta
+    S-->>C: true
+    C->>C: EnviarPorRed("MOVER;...")  (cola, no bloqueante)
+    C-->>IN: true
+    IN->>GJ: MostrarMensaje("Caminando a...") o AccionRechazada(...)
+```
+
+**Puntos clave del frame:**
+
+1. `ProcesarMensajesRedPendientes()` va **antes** de `Instantanea()` — si se invirtiera, la Vista dibujaría un frame viejo.
+2. `Instantanea()` se llama **una sola vez**; los 5 componentes de dibujo reciben **la misma copia**.
+3. Los clics del usuario se resuelven contra `UltimaFoto` (copia), pero se ejecutan contra el **Modelo vivo** vía el Controlador.
+4. El Controlador devuelve `bool` a la Vista: `true` = aceptó, `false` = la Vista muestra "No se pudo: ...".
+
 ---
 
 ## 4. Mapa de concurrencia
@@ -708,14 +899,16 @@ flowchart TB
 
     subgraph MODELO["Modelo — Simulacion"]
         LOCK{{"lock(Candado)\nLock del mundo"}}
-        T1["Task: Reloj (IniciarRelojAsync)"]
-        T2["Task: Entrenamiento (por unidad)"]
-        T3["Task: Construccion (por edificio)"]
-        T4["Task: Recoleccion (por aldeano)"]
-        T5["Task: Spawner de items (host)"]
-        T6["Task: Expiracion del Casco"]
-        T7["Task: Bucle de simulacion (Batalla Nivel 1)"]
-        T8["Task: IA Enemiga (IAEnemiga, PVE)"]
+        T1["Task: Reloj (IniciarRelojAsync)\n1 s -> TiempoJuegoSegundos++"]
+        T2["Task: Bucle de simulacion\n(AvanzarDestinos + ResolverTick)"]
+        T3["Task: Spawner de items (solo host)"]
+        T4["Task: Fauna (VagarFaunaAsync)\nciervos dan pasos al azar"]
+        T5["Task: Economia pasiva\nCasas->comida, Centros->oro (4 s)"]
+        T6["Task: Entrenamiento\n(1 por unidad en cola)"]
+        T7["Task: Construccion\n(1 por obra en curso)"]
+        T8["Task: Recoleccion\n(1 por aldeano trabajando)"]
+        T9["Task: Expiracion del Casco\nquita DefensaBonus a los X s"]
+        T10["Task: IA Enemiga\n(BucleDecisionAsync, PVE)"]
         COLA_OUT["ConcurrentQueue _salientes\n(productor-consumidor)"]
     end
 
@@ -730,16 +923,16 @@ flowchart TB
         LOCK_ENV{{"lock(_lockEnvio)"}}
     end
 
-    T1 & T2 & T3 & T4 & T5 & T6 & T7 & T8 -->|"mutan estado"| LOCK
-    T1 & T2 & T3 & T4 & T5 & T6 & T7 & T8 -.->|"Transmitir()"| COLA_OUT
+    T1 & T2 & T3 & T4 & T5 & T6 & T7 & T8 & T9 & T10 -->|"mutan estado"| LOCK
+    T1 & T2 & T3 & T4 & T5 & T6 & T7 & T8 & T9 -->|"Transmitir()"| COLA_OUT
     COLA_OUT -->|"SiguienteSaliente()"| EN
     EN -->|"Enviar()"| LOCK_ENV
     HILO_RED -->|"ReadLine() bloqueante"| COLA_IN
     HILO_RED -.->|"Enviar()"| LOCK_ENV
     COLA_IN -->|"RecibirMensaje()"| PC
     PC -->|"metodos espejo *Rival"| LOCK
-    V -->|"Instantanea()"| LOCK
-    T1 & T2 & T3 & T4 & T5 & T6 & T7 & T8 -.->|"RegistrarAccion()"| COLA_LOG
+    V -->|"Instantanea() copia bajo lock"| LOCK
+    T1 & T2 & T3 & T4 & T5 & T6 & T7 & T8 & T9 & T10 -.->|"RegistrarAccion()"| COLA_LOG
     COLA_LOG --> HILO_LOG -->|"escribe a disco"| DISCO[(configuracion / log / resultado)]
 
     style LOCK fill:#ffe6e6,stroke:#cc0000
@@ -753,47 +946,93 @@ flowchart TB
 
 | Elemento | Cantidad | Detalle |
 |---|---|---|
-| Tasks del Modelo | 8 | reloj, entrenamiento, construcción, recolección, spawner, expiración Casco, bucle de batalla, **IA enemiga (PVE)** |
-| Hilos (`Thread`) | 2 | escucha TCP (`ConectorRed`) + escritor de logs (`GestorArchivos`) |
-| Candados (`lock`) | 3 | `Simulacion.Candado`, `ConectorRed._lockEnvio`, cola interna de `GestorArchivos` |
-| Colas seguras | 3 | `_salientes`, `_recibidos`, cola de escritura de logs |
+| Tipos de Task del Modelo | **10** | reloj, bucle de simulación, spawner de items, fauna, economía pasiva, entrenamiento, construcción, recolección, expiración del Casco, **IA enemiga (PVE)** |
+| Tasks vivas a la vez | variable | 4 fijas (reloj, bucle, fauna, economía) + 1 si es host (spawner) + 1 por entrenamiento/obra/aldeano/casco + 1 si hay IA |
+| Hilos (`Thread`) | **2** | escucha TCP (`ConectorRed`) + escritor de logs (`GestorArchivos`) |
+| Candados (`lock`) | **3** | `Simulacion.Candado`, `ConectorRed._lockEnvio`, candado interno del `BlockingCollection` de `GestorArchivos` |
+| Colas seguras | **3** | `_salientes`, `_recibidos`, cola de escritura de logs |
+| `CancellationTokenSource` | **6 + n** | reloj, spawner, economía, simulación, efectos temporales, fauna (fijos) + 1 por entrenamiento/obra/recolección en curso |
 
 **Puntos clave para la defensa**
 
 1. **Nadie escribe a un socket ni a disco dentro de `lock(Candado)`.** El Modelo **encola** (`_salientes`) y el Controlador envía desde el hilo principal; los logs se encolan y los escribe un único hilo.
 2. **La Vista nunca toca las listas vivas:** pide `Instantanea()` una vez por frame (copia bajo candado) y dibuja sobre copias.
 3. **Reconexión:** los bucles `CicloServidor`/`CicloCliente` vuelven a aceptar/reintentar; `AlConectar` reenvía el `SALUDO`.
-4. **Batalla Nivel 1:** un solo hilo dentro del candado (sin carreras). El Nivel 2 (`Parallel.For`) queda como optimización futura.
+4. **Tubo muerto:** `PING`/`PONG` y corte a los 15 s sin recibir nada → el hilo de red reconecta solo, sin reiniciar la partida.
+5. **Batalla Nivel 1:** un solo hilo dentro del candado (sin carreras). El Nivel 2 (`Parallel.For`) queda como optimización futura.
+6. **`Detener()` usa `CancellationTokenSource`:** los 6 CTS del motor se cancelan; los trabajos en curso se fotografían **bajo candado** y se cancelan **fuera** (evita reentrada al iterar los diccionarios).
 
 ---
 
 ## 5. Anexo — Arquitectura de la Vista
 
-La Vista no calcula reglas; solo dibuja y delega:
+La Vista no calcula reglas; solo dibuja y delega. Son **12 MonoBehaviours**, todos colgando de `GestorJuego`:
 
 ```mermaid
-flowchart LR
-    GJ["GestorJuego\n(único dueño del JuegoControlador)"] --> JC["JuegoControlador"]
-    subgraph VISTA["Vista (Unity) — MonoBehaviour"]
-        HUD["HudRecursos\n(5 recursos + tiempo + mensajes)"]
-        TILES["VistaTablero\n(rejilla 30x30 + entidades)"]
-        IN["ControlInputUsuario\n(clics y teclas QWER/1-4/C/I)"]
-        FIN["PanelFinPartida\n(Reintentar → LoadScene)"]
+flowchart TB
+    subgraph VISTA["Vista (Unity) — MonoBehaviours"]
+        direction TB
+        GJ["GestorJuego\nÚNICO dueño del JuegoControlador\nUpdate(): red + 1 foto/frame"]
+        HUD["HudRecursos\n5 recursos + tiempo + mensajes"]
+        TILES["VistaTablero\nrejilla + entidades + niebla"]
+        IN["ControlInputUsuario\nclics, box-select, grupos, cámara RTS"]
+        FIN["PanelFinPartida\nvictoria / derrota"]
+        MENU["MenuInicio\nPVE / PVP / escenario"]
+        RED["MenuRed\nhospedar / conectar"]
+        MERC["MenuMercado\ntrueque (tecla T)"]
+        MEJ["MenuMejoras\nherrería (tecla Y)"]
+        MINI["Minimap\npuntos + marco de cámara"]
     end
-    GJ --> HUD & TILES & IN & FIN
-    HUD & TILES & FIN -->|"Instantanea() 1 vez/frame"| JC
-    IN -->|"Mover / Construir / Entrenar / Atacar / Recoger "| JC
-    FIN -->|"Detener() en OnDestroy"| JC
-    GJ -.->|"IniciarIA() (PVE)"| JC
+
+    JC["JuegoControlador\n(Controlador)"]
+    MOTOR["Simulacion (Modelo)\nlock(Candado) + 10 Tasks"]
+
+    GJ -->|"ÚNICO punto de creación"| JC
+    GJ -->|"Actualizar(foto)"| HUD & TILES & FIN & MINI
+    GJ -->|"Inicializar(this)"| HUD & TILES & IN & FIN
+    MENU -->|"ReiniciarConEscenario / IniciarPartidaRed"| GJ
+    RED -->|"IniciarPartidaRed(host, ip)"| GJ
+    IN -->|"Mover / Construir / Entrenar / Atacar / Recoger / Mercado"| JC
+    MERC -->|"Vender / Comprar"| JC
+    MEJ -->|"Mejorar*"| JC
+    HUD & TILES & FIN & MINI -.->|"leen InstantaneaJuego"| GJ
+    JC --> MOTOR
+
+    style JC fill:#f3e5f5,stroke:#6a1b9a
+    style MOTOR fill:#ffe6e6,stroke:#cc0000
+    style GJ fill:#e3f2fd,stroke:#1565c0
 ```
 
-**Contrato de la Vista:**
-- `Instantanea()` se llama **una sola vez por `Update()`** y la Vista dibuja desde esa copia.
-- `ProcesarMensajesRedPendientes()` se llama en `Update()` (drena la red).
+**Contrato de la Vista (reglas que no se rompen):**
+- `Instantanea()` se llama **una sola vez por `Update()`** y los 12 componentes dibujan desde esa misma copia.
+- `ProcesarMensajesRedPendientes()` se llama en `Update()` **antes** de la instantánea (si no, se pinta un frame tarde).
 - `Detener()` se llama en `OnDestroy` / `OnApplicationQuit` (apaga el motor, cierra la red y hace `Flush` de logs).
 - `MensajesDescartados` se muestra en el HUD: si crece, la conexión se cayó (aviso temprano de desync).
-- Los sprites se dibujan mapeando los `enum` (`TipoUnidad`, `TipoEdificio`, `TipoRecurso`, `TipoItem`) a imágenes (`[SerializeField]` en `VistaTablero`; arte pendiente del compañero — issue #5).
-- Escena mínima: `Assets/Escenas/Juego.unity` (cámara ortográfica + placeholders; la UI se construye por código en `GestorJuego.ConstruirUiSiFalta`).
+- Ningún componente de Vista crea `Task`/`Thread`/`lock`. Toda la concurrencia está en el Modelo.
+- `GestorJuego` es el **único** que instancia `JuegoControlador`; el resto lo recibe por `Inicializar(this)`.
+- La UI se construye por código en `ConstruirUiSiFalta()` si la escena no la trae enlazada; la escena mínima es `Assets/Escenas/Juego.unity`.
+- Los sprites se cargan de `Assets/Resources/Sprites` con `ArteRecursos`; si falta alguno, `SpriteFactory` genera pixel-art 16×16 por código (fallback, el juego no se rompe).
+
+### 5.1 Los 5 puntos exactos de intercambio Vista ↔ Controlador
+
+Estos son los **únicos** lugares donde la Vista cruza la frontera hacia el Controlador:
+
+| # | Punto | Archivo: línea aprox. | Qué hace | Dirección |
+|---|-------|----------------------|----------|-----------|
+| **1** | Creación del Controlador | `GestorJuego.Awake()` (l. 79) | `Controlador = new JuegoControlador(nombreJugador, localArriba)` | Vista → Controlador |
+| **2** | Drenado de red + foto (cada frame) | `GestorJuego.Update()` (l. 112-113) | `ProcesarMensajesRedPendientes()` y `Instantanea()` | Vista → Controlador |
+| **3** | Órdenes del jugador | `ControlInputUsuario` (l. 399, 473, 494, 520, 555, 578, 603, 638, 706, 1224) | `ConstruirEdificio`, `MoverUnidad`, `MoverAAtacar`, `MoverAAtacarEdificio`, `MoverARecolectar`, `MoverARecogerItem`, `EntrenarUnidad`, `CancelarDestino` | Vista → Controlador |
+| **4** | Menús (mercado / herrería / red) | `MenuMercado` (l. 52, 60), `MenuMejoras` (l. 51), `MenuRed` + `MenuInicio` → `GestorJuego` | `VenderRecurso`, `ComprarRecurso`, `Mejorar*`, `IniciarPartidaRed` | Vista → Controlador |
+| **5** | Apagado del motor | `GestorJuego.OnDestroy()` (l. 186) | `Controlador.Detener()` (cancela Tasks, cierra red, `Flush` de logs) | Vista → Controlador |
+
+Y solo **dos** caminos de regreso (Controlador/Vista nunca se llama entre sí, no hay retroalimentación):
+
+| # | Punto | Mecanismo | Dirección |
+|---|-------|-----------|-----------|
+| **A** | Pintar el mundo | `UltimaFoto` (`InstantaneaJuego`), copia inmutable creada bajo `lock(Candado)` | Controlador/Modelo → Vista |
+| **B** | Mensajes al usuario | `GestorJuego.MostrarMensaje()` / `AccionRechazada()` (la Vista se llama a sí misma) | Vista → Vista |
+
+**No hay más.** En concreto, el Controlador **nunca** toca un `Transform`, un `SpriteRenderer` ni un `Text`; y la Vista **nunca** llama a `Motor` para mutar el mundo (solo el Controlador lo hace, y solo con métodos que el Modelo ya serializa bajo su candado).
 
 ---
 

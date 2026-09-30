@@ -4,19 +4,35 @@ using System.Threading.Tasks;
 
 namespace Modelo
 {
-    //  IA ENEMIGA (PVE) — vive en el Modelo y corre en SU Task (concurrencia real).
+    // ============================================================================
+    //  IA ENEMIGA (PVE) — el "cerebro" de la maquina, en SU PROPIA Task
+    // ============================================================================
+    //  Corre en el Modelo, en una Task aparte (BucleDecisionAsync), con su
+    //  CancellationTokenSource. Cada IntervaloDecisionMs (2 s por defecto)
+    //  decide y actua sobre JugadorEnemigo:
+    //    1. Economia: manda a sus aldeanos al yacimiento mas cercano.
+    //    2. Construccion: Cuartel, Casas (comida pasiva) y Torres (defensa).
+    //    3. Militar: ejercito mixto (soldados, arqueros, caballeros).
+    //    4. Reunion: en la gracia militar mueve sus tropas a un punto de
+    //       reunion (se concentran pero todavia no pegan).
     //
-    //  Cada IntervaloDecisionMs decide y actúa sobre JugadorEnemigo:
-    //    1. Economía: manda a sus aldeanos a recolectar el yacimiento más cercano.
-    //    2. Construcción: Cuartel, Casas (comida pasiva) y Torres (defensa).
-    //    3. Militar: ejército mixto (soldados, arqueros, caballeros).
-    //    4. Reunión: en gracia mueve sus tropas al punto de reunión (sin pegar).
+    //  REGLAS DE CONCURRENCIA QUE RESPETA:
+    //  ---------------------------------------------------------------------------
+    //  · NUNCA toca listas "peladas". Todas sus mutaciones pasan por los metodos
+    //    *IA / *Para de Simulacion, que ya toman lock(Candado) internamente. Por
+    //    eso la IA compite con el jugador por el MISMO candado, sin carreras.
+    //  · Para LEER el estado usa Mundo.Instantanea(), que es una COPIA bajo
+    //    candado. Decide sobre la foto, no sobre las listas vivas.
+    //  · Sus tropas militares quedan con ControladaPorIA=true; las mueve y las
+    //    hace pelear el bucle de simulacion de Simulacion (Nivel 1), tambien
+    //    bajo lock. La IA no mueve unidades en combate ella misma: solo decide
+    //    (que construir, que entrenar, a quien mandar a recolectar).
+    //  · Cada exception en una decision se registra y el bucle CONTINUA: una
+    //    decision fallida no mata la IA.
     //
-    //  Las tropas militares que entrena quedan con ControladaPorIA=true y las
-    //  mueve/ hace pelear el bucle de simulación de Simulacion (Nivel 1, lock).
-    //
-    //  Todas las mutaciones pasan por los métodos *IA / *Para de Simulacion,
-    //  que ya toman lock(Candado). Esta clase no toca listas "peladas" sin candado.
+    //  LA IA ES UN "JUGADOR MAS": usa exactamente las mismas reglas y los mismos
+    //  metodos que el humano. Por eso no puede hacer trampas: si no tiene
+    //  madera, no puede construir el Cuartel, y sale false.
     public class IAEnemiga
     {
         private readonly Simulacion _mundo;

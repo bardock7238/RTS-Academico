@@ -7,30 +7,64 @@ using System.Threading.Tasks;
 
 namespace Modelo
 {
-    //  SIMULACIÓN (Modelo)
-    //  ----------------------------------------------------------------------------
-    //  "El mundo completo está AQUÍ, y AQUÍ único lugar donde vive la concurrencia."
+    // ============================================================================
+    //  SIMULACION — EL MODELO: el mundo completo y TODA la concurrencia
+    // ============================================================================
+    //  "El mundo entero esta AQUI, y AQUI el unico lugar donde vive la
+    //   concurrencia." Esta clase no importa UnityEngine: es POCO puro, y por eso
+    //   se puede probar en un .exe de consola sin abrir el Editor.
     //
-    //  Este motor concentra TODOS los mecanismos concurrentes del juego:
-    //    · Candado compartido: cada cambio a recursos/listas pasa por lock(Candado).
-    //    · Reloj en tiempo real (Task de fondo que suma 1 segundo cada segundo real).
-    //    · Entrenamiento (Task por unidad + CancellationToken para cancelar).
-    //    · Construcción (Task que completa el edificio solo).
-    //    · Recolección (Task por aldeano + CancellationToken).
-    //    · Spawner de items (solo el host siembra objetos solos en el mapa).
-    //    · Expiración del Casco (Task temporal que quita la defensa extra).
+    //  LOS 10 TIPOS DE TASK QUE VIVEN AQUI (todos con CancellationTokenSource):
+    //  ---------------------------------------------------------------------------
+    //   1. IniciarRelejAsync            +1 s a TiempoJuegoSegundos cada RelojTickMs
+    //   2. IniciarBucleSimulacionAsync  avanza destinos + resuelve el combate
+    //   3. IniciarSpawnerItemsAsync     siembra items (SOLO el host)
+    //   4. VagarFaunaAsync              los ciervos dan pasos al azar
+    //   5. EconomiaPasivaAsync         Casas->comida, Centros->oro, cada 4 s
+    //   6. EntrenamientoTaskAsync       1 por unidad entrenandose
+    //   7. ConstruccionTaskAsync       1 por obra en curso
+    //   8. RecoleccionTaskAsync        1 por aldeano trabajando
+    //   9. ExpiracionCascoAsync        quita el +defensa del Casco a los X s
+    //  10. IAEnemiga.BucleDecisionAsync decisiones de la maquina (PVE)
     //
-    //  El Controlador NO crea hilos ni candados: solo pide acciones y avisa al
-    //  rival por red. De esa manera la concurrencia queda 100% en el Modelo.
+    //  LAS 3 REGLAS QUE NO SE ROMPEN:
+    //  ---------------------------------------------------------------------------
+    //  R1. Toda mutacion de unidades/edificios/recursos/items pasa por
+    //      lock(Candado). Con eso ninguna Task ve el mundo a medio escribir.
     //
-    //  Uso en red:
-    //    · Las acciones DEL JUGADOR local se aplican aquí y el Controlador las
-    //      anuncia al rival; el rival las refleja con los métodos "Espejo" (XxxRival).
-    //    · Solo lo que el motor decide SOLO necesita avisar por red (una unidad que
-    //      terminó de entrenar, un item que apareció): se ENCOLA en la cola de
-    //      salida y el Controlador la drena desde el hilo principal (ver
-    //      ProcesarMensajesRedPendientes). Encolar es no bloqueante: NUNCA se
-    //      escribe a un socket dentro de lock(Candado).
+    //  R2. NUNCA se escribe a un socket ni a disco DENTRO de lock(Candado).
+    //      Para la red: Transmitir() solo encola en la ConcurrentQueue
+    //      _salientes, y el Controlador la drena en el hilo principal.
+    //      Para los logs: GestorArchivos.RegistrarAccion() encola y un unico
+    //      hilo escritor toca el disco.
+    //      Motivo: si el rival tiene la red lenta, un Enviar() bloqueando
+    //      congelaria el mundo entero.
+    //
+    //  R3. La Vista nunca lee estas listas vivas. Pide Instantanea(), que
+    //      devuelve una COPIA bajo candado (ver la clase InstantaneaJuego).
+    //
+    //  COMO ENTRA Y SALE LA INFORMACION (los 3 puntos del Modelo):
+    //  ---------------------------------------------------------------------------
+    //  ENTRADA desde el Controlador:
+    //    · Acciones del usuario: MoverUnidad, ConstruirEdificio, EntrenarUnidad,
+    //      Atacar, MoverARecolectar, MoverARecogerItem, Vender/Comprar, Mejorar*.
+    //      Cada una es un metodo publico que toma lock(Candado), valida y muta.
+    //    · Acciones de la IA: los mismos metodos con sufijo *IA, que delegan en
+    //      un metodo *Para con el JugadorEnemigo. Exactamente las mismas reglas.
+    //    · Acciones de la red: los metodos "Espejo" (MoverUnidadRival,
+    //      AplicarAtaqueRivalAUnidad, CrearUnidadRival, ...), que aplican en
+    //      esta maquina lo que el rival hizo en la suya.
+    //  SALIDA hacia el Controlador:
+    //    · Instantanea()        la foto que la Vista pinta.
+    //    · SiguienteSaliente()  la cola de mensajes para el rival, que el
+    //                            Controlador drena; la llena Transmitir().
+    //    · EstadoPartida        para que el Controlador vea el ganador y
+    //                            anuncie el FIN una sola vez.
+    //
+    //  PATRON DE RED (espejo): las acciones del JUGADOR LOCAL se aplican aqui y
+    //  el Controlador las anuncia al rival; el rival las refleja con los metodos
+    //  *Rival. Solo lo que el motor decide SOLO (un ataque del bucle, un item del
+    //  spawner, una unidad que termino de entrenar) se encola por su cuenta.
     public class Simulacion
     {
         // [Concurrencia] Candado del MUNDO (lo posee el Modelo): toda mutación de
@@ -52,6 +86,15 @@ namespace Modelo
             return null;
         }
 
+        // === INTERCAMBIO (6): MODELO -> RED (encolar, NUNCA enviar) ===
+        // Esta es una de las piezas centrales del diseno de concurrencia. Aqui,
+        // dentro de lock(Candado) y desde cualquier Task, el Modelo solo mete
+        // el texto en una ConcurrentQueue. NO se toca el socket: el que envia
+        // es el Controlador, en el hilo principal, dentro de
+        // ProcesarMensajesRedPendientes(). Gracias a esto:
+        //   · el Modelo nunca se bloquea esperando a la red;
+        //   · el socket se escribe desde un unico hilo (el de Unity);
+        //   · si el rival esta caido, el mensaje queda en cola y sale al reconectar.
         private void Transmitir(string mensaje) => _salientes.Enqueue(mensaje);
 
         public Jugador JugadorLocal { get; private set; }
@@ -479,6 +522,13 @@ namespace Modelo
         // La Vista debe llamar esto UNA vez por frame y pintar desde el resultado.
         public InstantaneaJuego Instantanea()
         {
+            // === INTERCAMBIO (5): MODELO -> VISTA ===
+            // Este lock es la UNICA razon por la que la Vista puede dibujar sin
+            // romperse. Dentro se copian las 7 listas y los 5 recursos (una
+            // operacion rapida: son referencias, no se clonan los objetos).
+            // Fuera, la Vista itera SU propia copia mientras las Tasks siguen
+            // mutando las listas originales: sin riesgo de "Collection was
+            // modified" ni de dibujar a medio cambiar.
             lock (Candado)
             {
                 return new InstantaneaJuego(
@@ -1439,6 +1489,20 @@ namespace Modelo
         /// guarda el resultado en resultado_final.txt.
         /// </remarks>
         /// <returns>void (el resultado se refleja en EstadoPartida.GanadorNombre)</returns>
+        /// <summary>
+        /// Verifica si algun jugador ha perdido y, si es asi, finaliza la partida.
+        /// </summary>
+        /// <remarks>
+        /// REGLAS DE DERROTA (segun la guia del proyecto):
+        ///   ENEMIGO: cae si su capital (primer Centro) es destruida, o si su
+        ///            Centro Urbano ya no existe.
+        ///   JUGADOR LOCAL: cae si pierde su Centro Urbano o si se queda sin
+        ///            unidades (ejercito aniquilado).
+        /// Se llama automaticamente tras cada ataque con muerte, cada edificio
+        /// demolido y desde ResolverTick (en cada latido de batalla). El candado
+        /// evita que dos latidos declaren ganador a la vez, y el early return
+        /// evita que se refinalice una partida ya cerrada.
+        /// </remarks>
         public void VerificarGanador()
         {
             lock (Candado)

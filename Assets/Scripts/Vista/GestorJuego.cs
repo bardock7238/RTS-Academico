@@ -4,9 +4,30 @@ using Modelo;
 
 namespace Vista
 {
-    // Raíz de la Vista PVE: crea el Controlador (API única), arranca la IA de la
-    // máquina y en cada frame drena la red + lee UNA instantánea para el resto
-    // de componentes. Cero Task/Thread/lock aquí (regla MVC de la profesora).
+    // ============================================================================
+    //  GESTORJUEGO — la RAÍZ DE LA VISTA (y el dueño único del Controlador)
+    // ============================================================================
+    //  Este script es el ÚNICO punto de la Vista que toca la frontera hacia el
+    //  Controlador. Los otros 11 MonoBehaviours de la Vista nunca crean un
+    //  JuegoControlador: lo reciben por Inicializar(this) y, cuando necesitan
+    //  hacer algo, se lo pasan a GestorJuego o llaman a _gestor.Controlador.
+    //
+    //  CERO Task, CERO Thread, CERO lock aquí. Toda la concurrencia del juego
+    //  vive en el Modelo (Simulacion.cs). Esta clase solo:
+    //     1. Crea el Controlador al arrancar la escena.
+    //     2. Llama 2 métodos del Controlador en cada frame.
+    //     3. Pasa la misma instantánea a los 4 componentes que dibujan.
+    //     4. Apaga todo al destruirse.
+    //
+    //  LOS INTERCAMBIOS DE ESTA CAPA (el bloque del Controlador tiene el detalle):
+    //  ---------------------------------------------------------------------------
+    //  (1) Awake()      -> new JuegoControlador(...)         [Vista -> Controlador]
+    //  (2) Update()     -> ProcesarMensajesRedPendientes()  [Vista -> Controlador]
+    //  (2) Update()     -> Instantanea()                    [Vista -> Controlador]
+    //  (5) Update()     -> Actualizar(foto) en los dibujadores
+    //                                                          [Modelo -> Vista]
+    //  (7) OnDestroy()  -> Detener()                         [Vista -> Controlador]
+    // ============================================================================
     public class GestorJuego : MonoBehaviour
     {
         [Header("Partida")]
@@ -76,6 +97,13 @@ namespace Vista
 
             GestorArchivos.CarpetaDestino = Application.persistentDataPath;
 
+            // === INTERCAMBIO (1): VISTA -> CONTROLADOR/MODELO ===
+            // Único punto donde nace el mundo. El Controlador, en su
+            // constructor, instancia el Modelo (Simulacion), que arma mapa,
+            // jugadores, bases y fauna, y ARRANCA SUS 4 TASKS FIJAS
+            // (reloj, bucle de simulación, fauna y economía pasiva; más el
+            // spawner de items si esta máquina es el host).
+            // A partir de aquí, el mundo avanza SOLO, sin que nadie lo pida.
             Controlador = new JuegoControlador(nombreJugador, localArriba);
 
             if (vistaTablero == null) vistaTablero = GetComponentInChildren<VistaTablero>(true);
@@ -108,10 +136,34 @@ namespace Vista
         {
             if (Controlador == null) return;
 
-            // Patrón obligatorio: procesar red ANTES de la instantánea.
+            // ====================================================================
+            //  INTERCAMBIO (2): VISTA -> CONTROLADOR   (doble llamada, por frame)
+            // ====================================================================
+            // Paso A — LA RED PRIMERO. Este método:
+            //   · drena la cola _salientes del Modelo y manda al rival por TCP
+            //     lo que haya pendiente (FUERA de cualquier candado);
+            //   · lee los mensajes que el hilo de red dejó en su cola y llama
+            //     a los métodos "Espejo" del Modelo (MoverUnidadRival,
+            //     AplicarAtaqueRivalAUnidad, CrearUnidadRival, ...);
+            //   · anuncia el FIN si este lado fue el que declaró al ganador;
+            //   · hace PING si el tubo lleva 3 s callado, y lo corta si lleva
+            //     15 s sin recibir (para que el hilo reconecte solo).
             Controlador.ProcesarMensajesRedPendientes();
+
+            // Paso B — LUEGO LA FOTO. Copia las listas y recursos del mundo
+            // bajo lock(Candado) y devuelve un InstantaneaJuego INMUTABLE.
+            // Es la ÚNICA fuente de datos de toda la Vista en este frame.
+            //
+            // ¿Por qué la red antes que la foto? Si se invirtiera, un ataque
+            // recibido del rival se vería un frame tarde: la foto se sacaría
+            // antes de aplicar el movimiento del espejo.
             UltimaFoto = Controlador.Instantanea();
 
+            // ====================================================================
+            //  INTERCAMBIO (5): MODELO -> VISTA   (pintar la foto)
+            // ====================================================================
+            // Los 4 dibujadores reciben LA MISMA copia. Ninguno vuelve a pedir
+            // una instantánea ni toca el Modelo: solo dibujan sobre esta foto.
             vistaTablero?.Actualizar(UltimaFoto);
             hudRecursos?.Actualizar(UltimaFoto, this);
             panelFin?.Actualizar(UltimaFoto);
@@ -175,12 +227,29 @@ namespace Vista
             _rivalVisto = false;
             _caidaDesde = -1f;
             Controlador.Detener();
+            // === INTERCAMBIO (1): VISTA -> CONTROLADOR/MODELO ===
+            // Único punto donde nace el mundo. El Controlador, en su
+            // constructor, instancia el Modelo (Simulacion), que arma mapa,
+            // jugadores, bases y fauna, y ARRANCA SUS 4 TASKS FIJAS
+            // (reloj, bucle de simulación, fauna y economía pasiva; más el
+            // spawner de items si esta máquina es el host).
+            // A partir de aquí, el mundo avanza SOLO, sin que nadie lo pida.
             Controlador = new JuegoControlador(nombreJugador, localArriba);
             _sonBajas = -1;
             menuInicio?.Mostrar();
             MostrarMensaje("Rival desconectado.", 5f, false);
         }
 
+        // INTERCAMBIO (7): VISTA -> CONTROLADOR (apagado ordenado).
+        // Se llama al salir de la escena, al parar el modo Play y al cerrar la
+        // aplicación. Detener() hace, en este orden:
+        //   1. Motor.Detener(): cancela los 6 CancellationTokenSource (reloj,
+        //      bucle, spawner, economía, fauna, efectos) y los trabajos en
+        //      curso (entrenamientos, obras, recolecciones).
+        //   2. Drena la cola saliente para que el último FIN alcance a salir.
+        //   3. Cierra el socket y hace unsubscribe del evento AlConectar.
+        //   4. GestorArchivos.Flush(): garantiza que los .txt quedaron en disco.
+        // El try/catch evita que una excepción al apagar tumbe el editor.
         private void OnDestroy()
         {
             if (_instancia == this)
@@ -295,6 +364,13 @@ namespace Vista
             hudRecursos?.Reiniciar();
             LimpiarMensaje();
             Controlador?.Detener();
+            // === INTERCAMBIO (1): VISTA -> CONTROLADOR/MODELO ===
+            // Único punto donde nace el mundo. El Controlador, en su
+            // constructor, instancia el Modelo (Simulacion), que arma mapa,
+            // jugadores, bases y fauna, y ARRANCA SUS 4 TASKS FIJAS
+            // (reloj, bucle de simulación, fauna y economía pasiva; más el
+            // spawner de items si esta máquina es el host).
+            // A partir de aquí, el mundo avanza SOLO, sin que nadie lo pida.
             Controlador = new JuegoControlador(nombreJugador, localArriba);
             _sonBajas = -1;
             menuInicio?.Mostrar();
