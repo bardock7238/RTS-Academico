@@ -7,8 +7,45 @@ using Modelo;
 
 namespace Vista
 {
-    // Traduce clics/teclas → API del Controlador. No valida reglas de negocio:
-    // solo pide y muestra el resultado (true/false) en la barra de mensajes.
+    // ============================================================================
+    //  CONTROLINPUTUSUARIO — la ENTRADA del usuario (el unico que "opera" el juego)
+    // ============================================================================
+    //  Traduce clics/teclas a llamadas de la API del Controlador. No valida NINGUNA
+    //  regla de negocio: no comprueba recursos, ni rangos, ni si la casilla es
+    //  valida. Solo pide la accion y mira el true/false que le devuelve el
+    //  Controlador para escribir un mensaje en la barra de estado.
+    //
+    //  POR QUE NO VALIDA AQUI (arquitectura MVC):
+    //    · Si esta capa decidiera "tienes madera suficiente", la regla existiria
+    //      en DOS sitios (aqui y en el Modelo) y se desincronizarian.
+    //    · El Modelo es el UNICO que sabe los costos, y lo sabe porque es el
+    //      que los cobra. Si la Vista opinara, el rival por red podria ver una
+    //      partida imposible.
+    //    · Asi, el 100% de las reglas vive en Simulacion, bajo lock(Candado).
+    //
+    //  LOS 3 TIPOS DE INTERCAMBIO QUE HACE ESTA CLASE:
+    //  ---------------------------------------------------------------------------
+    //  (A) VISTA -> MODELO, al confirmar la intencion. Traduce la pulsacion en
+    //      coordenadas de casilla y pide la accion al Controlador, que la pasa
+    //      al Modelo. El Controlador devuelve true/false.
+    //        · MoverUnidad, ConstruirEdificio, EntrenarUnidad
+    //        · MoverAAtacar / MoverAAtacarEdificio (tambien "camina y pega solo")
+    //        · MoverARecolectar, MoverARecogerItem
+    //        · CancelarDestino, IniciarRecoleccion, DetenerRecoleccion
+    //
+    //  (B) VISTA -> VISTA, para decidir sobre la foto. Las coordenadas del raton
+    //      se convierten a celda y se busca la entidad en UltimaFoto, que es una
+    //      COPIA segura del mundo (nunca se leen las listas vivas del Modelo).
+    //      Solo se elige el objetivo; la validacion la hace el Modelo.
+    //
+    //  (C) VISTA -> VISTA, para estado propio. Seleccionar, guardar grupos
+    //      (Ctrl+5-9) y abrir/cerrar modos (construir, recoger) son estado
+    //      PROPIO de la Vista: no cambian el mundo, asi que no van al Controlador.
+    //
+    //  LA FOTO: esta clase lee GestorJuego.UltimaFoto, que el Gestor pidio UNA
+    //  vez por frame al Controlador. Por eso el clic responde con la foto de
+    //  este frame, y la unidad puede haberse movido 1 celda desde el clic.
+    // ============================================================================
     public class ControlInputUsuario : MonoBehaviour
     {
         private GestorJuego _gestor;

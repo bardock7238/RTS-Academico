@@ -4,8 +4,25 @@ using Modelo;
 
 namespace Vista
 {
-    // Pinta el mapa y las entidades desde InstantaneaJuego (copia segura).
-    // Pool de sprites: cero Instantiate/Destroy por frame. Sin lógica de negocio.
+    // ============================================================================
+    //  VISTATABLERO — el PINTOR del tablero
+    // ============================================================================
+    //  Dibuja el mapa y las entidades desde el InstantaneaJuego (la foto segura).
+    //  Pool de sprites: cero Instantiate/Destroy por frame. Sin logica de negocio:
+    //  esta clase NO lee el Modelo, NO calcula recursos, NO decide nada. Solo
+    //  pinta lo que le llega y dibuja los efectos de combate (barras de vida,
+    //  interpolacion de movimiento, niebla de guerra, fantasma de construccion).
+    //
+    //  POR QUE USA UNA FOTO Y NO EL MODELO DIRECTO:
+    //    La Vista dibuja 60 veces por segundo, y en paralelo hay hasta 10 Tasks
+    //    del Modelo agregando o quitando unidades. Si esta clase recorriera las
+    //    listas VIVAS, Unity lanzaria "Collection was modified while enumerating"
+    //    y la partida se caeria. Por eso el Controlador le pasa una COPIA
+    //    (InstantaneaJuego) creada bajo lock(Candado). Aqui solo se pinta.
+    //
+    //  FLUJO POR FRAME:
+    //    GestorJuego.Update() -> Controlador.Instantanea() -> Actualizar(foto)
+    // ============================================================================
     public class VistaTablero : MonoBehaviour
     {
         [Header("Arte (opcional — issue #5 del repo)")]

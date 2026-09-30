@@ -8,18 +8,49 @@ using System.Threading;
 
 namespace Modelo
 {
-    // Tablero de comunicación TCP entre dos instancias del juego.
+    // ============================================================================
+    //  CONECTORRED — la RED entre las dos maquinas (TCP, hilo dedicado)
+    // ============================================================================
+    //  Tablero de comunicacion TCP entre las dos instancias del juego. Vive en
+    //  el MODELO, pero la usa el Controlador. No toca el juego por si misma: solo
+    //  mueve lineas de texto.
     //
-    // Quién hace qué:
-    //   - El hilo de escucha SOLO lee del tubo y mete líneas en una cola (no
-    //     toca el juego). Así el hilo principal puede bloquearse leyendo la red
-    //     sin congelar la partida.
-    //   - El hilo principal del juego pregunta HayMensajes / RecibirMensaje y
-    //     aplica cada acción. Eso lo hace el Controlador (Vista ya no).
+    //  LOS 2 HILOS QUE USA (y por que):
+    //  ---------------------------------------------------------------------------
+    //  1) Thread "HiloRedServidor" (si soy host) o "HiloRedCliente" (si soy
+    //     cliente), ambos IsBackground. Este hilo hace la lectura BLOQUEANTE
+    //     (ReadLine) y SOLO mete cada linea en la ConcurrentQueue _recibidos.
+    //     NO toca unidades, ni recursos, ni el candado. Por eso puede quedarse
+    //     esperando datos del rival sin congelar la partida: es un hilo aparte.
+    //     El hilo principal del juego NUNCA se bloquea leyendo la red.
+    //  2) El hilo principal de Unity, que escribe al socket desde
+    //     Enviar(), protegido con lock(_lockEnvio) para que dos envios no se
+    //     pisen.
     //
-    // Protocolo (separador ';'): MOVER;x1;y1;x2;y2 | ATACAR;xa;ya;xb;yb;dano |
-    // ATACAR_EDIFICIO;xa;ya;xe;ye;ataque | CONSTRUIR;Tipo;x;y | ENTRENAR;Tipo;x;y |
-    // SALUDO;nombre | RECOLECTAR;x;y;1|0 | ITEM;TipoItem;x;y | RECOGER_ITEM;TipoItem;x;y
+    //  FLUJO DE UN MENSAJE (ida y vuelta):
+    //  ---------------------------------------------------------------------------
+    //  EMISOR  Modelo: Transmitir("MOVER;...") -> cola _salientes (no bloquea)
+    //           Controlador: ProcesarMensajesRedPendientes() -> Enviar(...) -> hilo
+    //  RECEPTOR Hilo de red: ReadLine() -> encola en _recibidos (no toca el juego)
+    //           Controlador: RecibirMensaje() -> ProcesarMensajeRed() -> metodos
+    //           espejo del Modelo (*Rival), que toman lock(Candado)
+    //
+    //  PROTOCOLO (separador ';'):
+    //    SALUDO;<nombre>
+    //    MOVER;<ox>;<oy>;<x>;<y>
+    //    ATACAR;<ax>;<ay>;<bx>;<by>;<dano>
+    //    ATACAR_EDIFICIO;<ax>;<ay>;<ex>;<ey>;<ataque>
+    //    CONSTRUIR;<Tipo>;<x>;<y>
+    //    ENTRENAR;<Tipo>;<x>;<y>
+    //    RECOLECTAR;<x>;<y>;<1|0>
+    //    ITEM;<TipoItem>;<x>;<y>
+    //    RECOGER_ITEM;<TipoItem>;<x>;<y>
+    //    FIN;<ganador>
+    //    PING / PONG  (latido silencioso: detecta tubos muertos)
+    //
+    //  El campo Aridad (en el Controlador) valida cuantos campos trae cada
+    //  comando, para que un mensaje a medias (por una reconexion) se descarte
+    //  sin reventar el Update() del juego.
     public class ConectorRed : IDisposable
     {
         public bool EstaConectado { get; private set; }
