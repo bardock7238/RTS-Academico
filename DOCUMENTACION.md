@@ -643,12 +643,12 @@ Formato del protocolo: para que rendericen en cualquier visor, en los diagramas 
 
 ```mermaid
 sequenceDiagram
-    participant CG as GestorJuego (Update)
+    participant CG as GestorJuego
     participant C as JuegoControlador
     participant CR as ConectorRed
 
     Note over C: ProcesarMensajesRedPendientes()
-    C->>C: ¿Han pasado 3 s sin enviar? → EnviarPorRed("PING")
+    C->>C: ¿Han pasado 3 s sin enviar? → EnviarPorRed PING
     CR->>CR: Escribe la línea (lock _lockEnvio)
     Note over CR: El rival responde PING→PONG al instante
 
@@ -659,29 +659,6 @@ sequenceDiagram
 ```
 
 **Por qué existe:** una red WiFi puede cortar el tubo "a medias" (sin `FIN`): todo queda callado y el espejo se congela. El latido lo detecta en 15 s sin reiniciar la partida; la reconexión la hace el propio hilo de red.
-
-### 3.7 Mercado y herrería (exclusivos del jugador local)
-
-```mermaid
-sequenceDiagram
-    participant U as Usuario (tecla T / Y)
-    participant MM as MenuMercado / MenuMejoras (Vista)
-    participant C as JuegoControlador
-    participant S as Simulacion
-
-    U->>MM: clic en "Vender 100 madera" / "+1 Ataque"
-    MM->>C: VenderRecurso(TipoRecurso) / MejorarAtaque()
-    C->>S: Motor.VenderRecurso(...) / Motor.MejorarAtaque()
-    S->>S: lock(Candado) — QuitarDe(100) + Recibir(60 oro)<br/>o Gastar(costos) + BonoAtaque++
-    S-->>C: true
-    C-->>MM: true
-    MM->>MM: MostrarMensaje("Vendidos 100 de Madera (+60 oro)")
-
-    Note over S: No se anuncia por red a propósito:<br/>el trueque y la herrería sondecidedores locales
-    Note over CG: El próximo frame la foto ya trae los recursos nuevos
-```
-
-
 
 ### 3.1 Mover una unidad y espejarlo en el rival
 
@@ -700,7 +677,7 @@ sequenceDiagram
         C->>CR: Enviar comando MOVER (ox, oy, x, y)
         CR-->>C: ok
     else sin conexión
-        C->>C: MensajesDescartados++ + log "NO ENVIADO"
+        C->>C: MensajesDescartados++ mas log NO ENVIADO
     end
     Note over C: Registra la acción en GestorArchivos
 
@@ -813,10 +790,10 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
-    participant CG as GestorJuego (Vista)
+    participant CG as GestorJuego
     participant C as JuegoControlador
     participant S as Simulacion
-    participant IA as IAEnemiga (Task)
+    participant IA as IAEnemiga
 
     CG->>C: IniciarIA()
     C->>S: IniciarIA() — crea _ia y lanza BucleDecisionAsync
@@ -832,48 +809,48 @@ sequenceDiagram
     Note over CG: Detener() en OnDestroy → _ia.Detener()
 ```
 
-### 3.8 El frame completo: Vista ↔ Controlador ↔ Modelo
+### 3.7 El frame completo: Vista ↔ Controlador ↔ Modelo
 
-Este es el ciclo que se repite ~60 veces por segundo. Muestra **exactamente** dónde está cada intercambio:
+Este es el ciclo que se repite unas 60 veces por segundo. Muestra **exactamente** dónde está cada intercambio.
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant U as Usuario
-    participant IN as ControlInputUsuario (Vista)
-    participant GJ as GestorJuego (Vista)
+    participant IN as ControlInputUsuario - Vista
+    participant GJ as GestorJuego - Vista
     participant C as JuegoControlador
-    participant S as Simulacion (Modelo)
-    participant CR as ConectorRed (Modelo)
-    participant T as Hud / VistaTablero / Minimap (Vista)
+    participant S as Simulacion - Modelo
+    participant CR as ConectorRed - Modelo
+    participant T as Hud y VistaTablero - Vista
 
-    Note over GJ: === Update() en el HILO PRINCIPAL de Unity ===
-    GJ->>C: ProcesarMensajesRedPendientes()  (intercambio 2)
-    C->>C: drena _salientes (Modelo hacia red)
-    C->>CR: Enviar(...)  (FUERA de lock)
-    C->>C: RecibirMensaje() -> ProcesarMensajeRed(mensaje)
-    C->>S: Motor.MoverUnidadRival(...) / AplicarAtaqueRival...
+    Note over GJ: Update() en el HILO PRINCIPAL de Unity
+    GJ->>C: ProcesarMensajesRedPendientes() - intercambio 2
+    C->>C: drena la cola _salientes (Modelo hacia red)
+    C->>CR: Enviar() - FUERA de lock
+    C->>C: RecibirMensaje() y ProcesarMensajeRed(mensaje)
+    C->>S: metodos espejo, ej. MoverUnidadRival
     S->>S: lock(Candado) - aplica el espejo
-    C->>C: si GanadorNombre != null, envia FIN (una sola vez)
+    C->>C: si hay ganador, envia FIN una sola vez
 
-    GJ->>C: Instantanea()  (intercambio 2)
+    GJ->>C: Instantanea() - intercambio 2
     C->>S: Motor.Instantanea()
     S->>S: lock(Candado) - COPIA listas y recursos
     S-->>C: InstantaneaJuego
     C-->>GJ: UltimaFoto
-    GJ->>T: Actualizar(UltimaFoto)  (intercambio A: pintar)
-    T->>T: dibuja sprites, HUD, minimapa (solo COPIAS)
+    GJ->>T: Actualizar(UltimaFoto) - intercambio A, pintar
+    T->>T: dibuja sprites, HUD y minimapa con COPIAS
 
-    Note over U,S: === Cuando el usuario hace clic ===
+    Note over U,S: Cuando el usuario hace clic
     U->>IN: clic en el mapa
-    IN->>IN: celda desde raycast, busca en UltimaFoto
-    IN->>C: MoverUnidad / ConstruirEdificio / Atacar / Entrenar  (intercambio 3)
-    C->>S: Motor.MoverUnidad(...)  (Controlador hacia Modelo)
+    IN->>IN: celda por raycast, busca en UltimaFoto
+    IN->>C: MoverUnidad / Construir / Atacar / Entrenar - intercambio 3
+    C->>S: Motor.MoverUnidad() - Controlador hacia Modelo
     S->>S: lock(Candado) - valida y muta
     S-->>C: true
-    C->>C: EnviarPorRed("MOVER;...")  (cola, no bloqueante)
+    C->>C: EnviarPorRed() encola el comando, no bloquea
     C-->>IN: true
-    IN->>GJ: MostrarMensaje("Caminando a...") o AccionRechazada(...)
+    IN->>GJ: MostrarMensaje() o AccionRechazada()
 ```
 
 **Puntos clave del frame:**
@@ -882,6 +859,39 @@ sequenceDiagram
 2. `Instantanea()` se llama **una sola vez**; los 5 componentes de dibujo reciben **la misma copia**.
 3. Los clics del usuario se resuelven contra `UltimaFoto` (copia), pero se ejecutan contra el **Modelo vivo** vía el Controlador.
 4. El Controlador devuelve `bool` a la Vista: `true` = aceptó, `false` = la Vista muestra "No se pudo: ...".
+
+### 3.8 Mercado y herreria (exclusivos del jugador local)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as Usuario
+    participant MM as MenuMercado y MenuMejoras - Vista
+    participant GJ as GestorJuego - Vista
+    participant C as JuegoControlador
+    participant S as Simulacion - Modelo
+
+    Note over U,S: Mercado - tecla T
+    U->>MM: clic en Vender 100 madera
+    MM->>C: VenderRecurso(TipoRecurso)
+    C->>S: Motor.VenderRecurso(tipo)
+    S->>S: lock(Candado) - quita 100 y da 60 de oro
+    S-->>C: true
+    C-->>MM: true
+    MM->>GJ: MostrarMensaje de venta
+
+    Note over U,S: Herreria - tecla Y
+    U->>MM: clic en +1 Ataque
+    MM->>C: MejorarAtaque()
+    C->>S: Motor.MejorarAtaque()
+    S->>S: lock(Candado) - cobra y sube BonoAtaque
+    S-->>C: true
+    C-->>MM: true
+    MM->>GJ: MostrarMensaje de mejora
+
+    Note over C,S: No se anuncia por red a proposito
+    Note over GJ: En el proximo frame la foto ya trae los recursos nuevos
+```
 
 ---
 
@@ -1160,6 +1170,8 @@ flowchart LR
 ```mermaid
 sequenceDiagram
     participant J1 as Jugador 1 Host
+    participant C1 as JuegoControlador Host
+    participant C2 as JuegoControlador Cliente
     participant S1 as Simulacion Host
     participant TCP as TCP Socket
     participant S2 as Simulacion Cliente
@@ -1172,7 +1184,8 @@ sequenceDiagram
     TCP->>S2: Recibir comando
     S2->>S2: lock: aplicar mismo comando
     S2-->>J2: Instantanea actualizada
-    J2->>S2: Construir/Entrenar/Mover/Atacar
+    J2->>C2: Construir/Entrenar/Mover/Atacar
+    C2->>S2: lock: aplicar mismo comando
     S2->>S2: lock: aplicar acción local
     S2->>S2: Transmitir comando
     S2->>TCP: Enviar comando (fuera lock)
